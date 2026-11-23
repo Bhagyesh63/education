@@ -116,8 +116,12 @@ frappe.ui.form.on('Fee Schedule', {
         ) {
           frm.add_custom_button(__(button_label), function () {
             frappe.call({
-              method: 'create_fees',
-              doc: frm.doc,
+              method: 'run_doc_method',
+              args: {
+                dt: frm.doc.doctype,
+                dn: frm.doc.name,
+                method: 'create_fees',
+              },
               callback: function () {
                 frm.refresh()
               },

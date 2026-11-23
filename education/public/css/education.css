@@ -1,0 +1,8 @@
+/* Education App Custom Styles */
+
+/* Hide secondary button (Set all private / Set all public) in upload dialogs */
+.modal:has(.file-uploader) .modal-footer .btn-secondary,
+.modal[data-modal-name*="Upload"] .modal-footer .btn-secondary,
+.modal.file-uploader-dialog .modal-footer .btn-secondary {
+	display: none !important;
+}

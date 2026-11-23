@@ -27,7 +27,7 @@ add_to_apps_screen = [
 # ------------------
 
 # include js, css files in header of desk.html
-# app_include_css = "/assets/education/css/education.css"
+app_include_css = "/assets/education/css/education.css"
 # app_include_js = "/assets/education/js/education.js"
 app_include_js = "education.bundle.js"
 
@@ -194,13 +194,11 @@ has_permission = {
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"File": {
+		"before_insert": "education.file_security.enforce_private_attachment",
+	}
+}
 
 # Scheduled Tasks
 # ---------------
