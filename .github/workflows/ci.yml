@@ -44,7 +44,7 @@ jobs:
 
     services:
       mysql:
-        image: mariadb:10.6
+        image: mariadb:11.8
         env:
           MARIADB_ROOT_PASSWORD: "root"
         ports:
@@ -115,6 +115,7 @@ jobs:
           bash ${GITHUB_WORKSPACE}/.github/helper/install.sh
         env:
           FRAPPE_BRANCH: ${{ env.FRAPPE_BRANCH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Tests
         run: cd ~/frappe-bench/ && bench --site test_site run-tests --app education
