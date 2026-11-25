@@ -129,7 +129,7 @@ class FeeSchedule(Document):
             frappe.db.get_all(
                 "Fee Schedule",
                 filters={"fee_structure": self.fee_structure},
-                fields=["sum(total_amount) as total"],
+                fields=[{"SUM": "total_amount", "as": "total"}],
             )[0]["total"]
             or 0
         )
@@ -345,31 +345,36 @@ def get_students(
     student_category=None,
     program=None,
 ):
-    conditions = ""
-    values = [academic_year, student_group]
+    StudentGroupStudent = frappe.qb.DocType("Student Group Student")
+    ProgramEnrollment = frappe.qb.DocType("Program Enrollment")
 
+    query = (
+        frappe.qb.from_(StudentGroupStudent)
+        .inner_join(ProgramEnrollment)
+        .on(ProgramEnrollment.student == StudentGroupStudent.student)
+        .select(
+            ProgramEnrollment.student,
+            ProgramEnrollment.student_name,
+            ProgramEnrollment.program,
+            ProgramEnrollment.student_batch_name,
+            ProgramEnrollment.name.as_("enrollment"),
+            StudentGroupStudent.parent,
+        )
+        .where(
+            (ProgramEnrollment.docstatus == 1)
+            & (ProgramEnrollment.academic_year == academic_year)
+            & (StudentGroupStudent.parent == student_group)
+            & (StudentGroupStudent.active == 1)
+        )
+    )
     if student_category:
-        conditions = " and pe.student_category=%s"
-        values.append(student_category)
+        query = query.where(ProgramEnrollment.student_category == student_category)
     if program:
-        conditions += " and pe.program=%s"
-        values.append(program)
+        query = query.where(ProgramEnrollment.program == program)
     if academic_term:
-        conditions += " and pe.academic_term=%s"
-        values.append(academic_term)
-    query = """
-        select pe.student, pe.student_name, pe.program, pe.student_batch_name, pe.name as enrollment, sgs.parent
-        from `tabStudent Group Student` sgs, `tabProgram Enrollment` pe
-        where
-            pe.docstatus = 1 and pe.student = sgs.student and pe.academic_year = %s
-            and sgs.parent = %s and sgs.active = 1
-        """
+        query = query.where(ProgramEnrollment.academic_term == academic_term)
 
-    query += conditions
-
-    students = frappe.db.sql(query, tuple(values), as_dict=1)
-
-    return students
+    return query.run(as_dict=True)
 
 
 @frappe.whitelist()
@@ -394,6 +399,7 @@ def get_total_students(
 def get_fee_structure(
     source_name: str, target_doc: Document | dict | str | None = None
 ):
+    frappe.has_permission("Fee Schedule", "create", throw=True)
     fee_request = get_mapped_doc(
         "Fee Structure",
         source_name,

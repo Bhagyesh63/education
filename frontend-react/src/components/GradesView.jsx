@@ -1,3 +1,4 @@
+import { todayISO } from '../utils/date';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -28,7 +29,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/frappeClient';
-import { calculateGradeFromScale, getGradeBadgeTheme, isPassingGrade } from '../utils/grades';
+import { calculateGradeFromScale, getGradeBadgeTheme, isPassingGrade, getGradeDescription, getPassPercentage, isPassingPercentage } from '../utils/grades';
 
 export default function GradesView() {
   const { 
@@ -42,7 +43,8 @@ export default function GradesView() {
     isGuardian, 
     isStaff, 
     isInstructor, 
-    isAdmin 
+    isAdmin,
+    schoolSettings
   } = useAuth();
   const navigate = useNavigate();
 
@@ -83,19 +85,25 @@ export default function GradesView() {
     courses: [],
     assessment_groups: [],
     grading_scales: [],
+    criteria: [],
   });
   const [creatingPlan, setCreatingPlan] = useState(false);
   const [createPlanError, setCreatePlanError] = useState('');
   const [createPlanForm, setCreatePlanForm] = useState({
-    program: 'Standard 6',
-    student_group: 'Standard 6 - Section A',
-    course: 'Mathematics',
+    program: '',
+    student_group: '',
+    course: '',
     assessment_name: '',
     assessment_group: '',
-    grading_scale: 'ABC School Grading Scale',
-    schedule_date: new Date().toISOString().split('T')[0],
-    criteria_preset: 'performance_100',
+    grading_scale: '',
+    schedule_date: todayISO(),
+    criteria_preset: '',
   });
+
+  // Official report card meta (school header, attendance, class teacher) for the report card modal
+  const [reportCardMeta, setReportCardMeta] = useState(null);
+  const [reportCardMetaLoading, setReportCardMetaLoading] = useState(false);
+  const [resultsError, setResultsError] = useState('');
 
   // Fetch all registered academic programs so future classes are automatically present
   useEffect(() => {
@@ -113,14 +121,21 @@ export default function GradesView() {
     // For staff: fetch all results across students.
     // For student/guardian: fetch specifically for active ward / student
     const studentId = isStaff ? null : (activeStudentId || studentProfile?.name || null);
+    if (!isStaff && !studentId) {
+      setAllResults([]);
+      setLoading(false);
+      return;
+    }
+    setResultsError('');
 
     api.getAssessmentResults(studentId, null, null)
       .then((data) => {
-        setAllResults(data || []);
+        setAllResults(Array.isArray(data) ? data : []);
       })
       .catch((err) => {
         console.error('Error fetching assessment results:', err);
         setAllResults([]);
+        setResultsError(err.message || 'Unable to load assessment results.');
       })
       .finally(() => setLoading(false));
   };
@@ -191,20 +206,26 @@ export default function GradesView() {
       const metaData = await api.getAssessmentSetupMetadata();
       if (metaData) {
         setPlanMeta(metaData);
-        const targetProg = initialProgram || (gradebookProgramFilter !== 'all' ? gradebookProgramFilter : (selectedProgramFilter !== 'all' ? selectedProgramFilter : (activeProgram || 'Standard 6')));
+        const targetProg = initialProgram
+          || (gradebookProgramFilter !== 'all' ? gradebookProgramFilter : null)
+          || (selectedProgramFilter !== 'all' ? selectedProgramFilter : null)
+          || activeProgram
+          || metaData.programs?.[0]?.name
+          || '';
         const matchingGroups = (metaData.student_groups || []).filter(g => !targetProg || g.program === targetProg);
-        const targetGroup = matchingGroups[0]?.name || (metaData.student_groups?.[0]?.name || 'Standard 6 - Section A');
-        const targetCourse = metaData.courses?.[0]?.name || 'Mathematics';
+        const targetGroup = matchingGroups[0]?.name || '';
+        const targetCourse = metaData.courses?.[0]?.name || '';
+        const courseScale = (metaData.courses || []).find(c => c.name === targetCourse)?.default_grading_scale;
 
         setCreatePlanForm({
           program: targetProg,
           student_group: targetGroup,
           course: targetCourse,
-          assessment_name: `Mid-Term Exam - ${targetCourse} (${targetProg})`,
-          assessment_group: (metaData.assessment_groups || []).find(ag => ag.name.includes(targetProg))?.name || (metaData.assessment_groups?.[0]?.name || ''),
-          grading_scale: metaData.grading_scales?.[0]?.name || 'ABC School Grading Scale',
-          schedule_date: new Date().toISOString().split('T')[0],
-          criteria_preset: 'performance_100',
+          assessment_name: '',
+          assessment_group: (metaData.assessment_groups || []).find(ag => targetProg && ag.name.includes(targetProg))?.name || (metaData.assessment_groups?.[0]?.name || ''),
+          grading_scale: courseScale || metaData.grading_scales?.[0]?.name || '',
+          schedule_date: todayISO(),
+          criteria_preset: metaData.criteria?.[0]?.name || '',
         });
       }
     } catch (err) {
@@ -222,19 +243,18 @@ export default function GradesView() {
       setCreatePlanError('Please select a course / subject.');
       return;
     }
+    if (!createPlanForm.criteria_preset) {
+      setCreatePlanError('Please select an assessment criteria (configure Assessment Criteria in Frappe first).');
+      return;
+    }
 
     setCreatingPlan(true);
     setCreatePlanError('');
 
     try {
-      const criteriaList = createPlanForm.criteria_preset === 'written_80_oral_20'
-        ? [
-            { assessment_criteria: 'Written Examination', maximum_score: 80.0 },
-            { assessment_criteria: 'Oral Examination', maximum_score: 20.0 }
-          ]
-        : [
-            { assessment_criteria: 'Class Performance', maximum_score: 100.0 }
-          ];
+      const criteriaList = [
+        { assessment_criteria: createPlanForm.criteria_preset, maximum_score: 100.0 },
+      ];
 
       const res = await api.createAssessmentPlan({
         student_group: createPlanForm.student_group,
@@ -242,7 +262,7 @@ export default function GradesView() {
         program: createPlanForm.program,
         assessment_group: createPlanForm.assessment_group || undefined,
         grading_scale: createPlanForm.grading_scale || undefined,
-        assessment_name: createPlanForm.assessment_name || `${createPlanForm.course} - ${createPlanForm.student_group} Assessment`,
+        assessment_name: createPlanForm.assessment_name || undefined,
         schedule_date: createPlanForm.schedule_date,
         criteria: JSON.stringify(criteriaList),
       });
@@ -271,15 +291,13 @@ export default function GradesView() {
   // Unique programs among assessment plans
   const uniquePlanPrograms = useMemo(() => {
     const progs = new Set([
-      'Standard 5',
-      'Standard 6',
-      'Standard 7',
+      ...(planMeta.programs || []).map(p => p.name).filter(Boolean),
       ...(programs || []).map(p => (typeof p === 'object' ? p.program : p)).filter(Boolean),
       ...assessmentPlans.map(p => p.program).filter(Boolean),
       ...(dbPrograms || []).map(p => p.name).filter(Boolean),
     ]);
     return Array.from(progs).sort();
-  }, [programs, assessmentPlans, dbPrograms]);
+  }, [programs, assessmentPlans, dbPrograms, planMeta.programs]);
 
   // Filtered assessment plans for the Gradebook modal dropdown
   const filteredAssessmentPlans = useMemo(() => {
@@ -340,7 +358,7 @@ export default function GradesView() {
   }, [assessmentPlans, selectedPlanId]);
 
   const totalMaxScore = useMemo(() => {
-    return planCriteria.reduce((sum, c) => sum + Number(c.maximum_score || 0), 0) || 100;
+    return planCriteria.reduce((sum, c) => sum + Number(c.maximum_score || 0), 0);
   }, [planCriteria]);
 
   const handleScoreChange = (studentId, criteriaName, val, maxScore) => {
@@ -491,8 +509,11 @@ export default function GradesView() {
   let distinctionCount = 0;
 
   const intervals = gradingScaleData?.intervals || [];
-  const topGrade = intervals[0]?.grade || 'A+';
-  const secondTopGrade = intervals[1]?.grade || 'A';
+  const passPercentage = getPassPercentage(intervals, gradingScaleData?.pass_percentage);
+  const topGrade = intervals[0]?.grade || null;
+  const secondTopGrade = intervals[1]?.grade || null;
+  // Prefer the grade Frappe stored on the Assessment Result; derive from the scale only if missing
+  const gradeForResult = (r, pct) => r?.grade || calculateGradeFromScale(pct, intervals);
 
   displayedResults.forEach((r) => {
     const score = Number(r.total_score || 0);
@@ -503,9 +524,10 @@ export default function GradesView() {
     if (r.student) uniqueStudentsSet.add(r.student);
 
     const pct = max > 0 ? (score / max) * 100 : 0;
-    const grade = calculateGradeFromScale(pct, intervals);
-    if (isPassingGrade(grade, intervals)) passedCount += 1;
-    if (grade === topGrade || grade === secondTopGrade) distinctionCount += 1;
+    const grade = gradeForResult(r, pct);
+    const passedByPct = isPassingPercentage(pct, intervals, passPercentage);
+    if (passedByPct === null ? isPassingGrade(grade, intervals) : passedByPct) passedCount += 1;
+    if (grade && (grade === topGrade || grade === secondTopGrade)) distinctionCount += 1;
 
     if (r.course) {
       if (!subjectScores[r.course]) {
@@ -517,8 +539,10 @@ export default function GradesView() {
     }
   });
 
-  const overallPercentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
-  const overallGrade = calculateGradeFromScale(overallPercentage, intervals);
+  const overallPercentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : null;
+  const overallGrade = overallPercentage === null ? '—' : calculateGradeFromScale(overallPercentage, intervals);
+  const overallGradeDescription = getGradeDescription(overallGrade, intervals);
+  const overallPassed = overallPercentage === null ? null : isPassingPercentage(overallPercentage, intervals, passPercentage);
 
   let topCourse = null;
   let topCourseAvg = -1;
@@ -530,7 +554,7 @@ export default function GradesView() {
     }
   });
 
-  const passRate = displayedResults.length > 0 ? Math.round((passedCount / displayedResults.length) * 100) : 100;
+  const passRate = displayedResults.length > 0 ? Math.round((passedCount / displayedResults.length) * 100) : null;
 
   // Extract unique students for Teacher/Staff and Guardian student switcher
   const uniqueStudents = useMemo(() => {
@@ -540,7 +564,7 @@ export default function GradesView() {
         map.set(r.student, {
           id: r.student,
           name: r.student_name || r.student,
-          program: r.program || activeProgram || 'Standard 5',
+          program: r.program || '',
         });
       }
     });
@@ -551,7 +575,7 @@ export default function GradesView() {
           map.set(w.student, {
             id: w.student,
             name: w.student_name || w.student,
-            program: w.program || activeProgram || 'Standard 5',
+            program: w.program || '',
           });
         }
       });
@@ -564,9 +588,9 @@ export default function GradesView() {
   const activeReportTargetId = useMemo(() => {
     if (selectedReportStudent) return selectedReportStudent;
     if (isStaff) {
-      return displayedResults[0]?.student || allResults[0]?.student || 'EDU-STU-2026-00001';
+      return displayedResults[0]?.student || allResults[0]?.student || null;
     }
-    return activeStudentId || studentProfile?.name || 'EDU-STU-2026-00001';
+    return activeStudentId || studentProfile?.name || null;
   }, [selectedReportStudent, isStaff, displayedResults, allResults, activeStudentId, studentProfile?.name]);
 
   const studentReportResults = useMemo(() => {
@@ -580,12 +604,12 @@ export default function GradesView() {
       tot += Number(r.total_score || 0);
       mx += Number(r.maximum_score || 0);
     });
-    const pct = mx > 0 ? Math.round((tot / mx) * 100) : 0;
+    const pct = mx > 0 ? Math.round((tot / mx) * 100) : null;
     
     const info = uniqueStudents.find(s => s.id === activeReportTargetId) || {
       id: activeReportTargetId,
-      name: studentReportResults[0]?.student_name || studentProfile?.student_name || 'Rahul Sharma',
-      program: studentReportResults[0]?.program || activeProgram || 'Standard 5',
+      name: studentReportResults[0]?.student_name || reportCardMeta?.student?.student_name || studentProfile?.student_name || '',
+      program: studentReportResults[0]?.program || '',
     };
 
     return {
@@ -594,9 +618,27 @@ export default function GradesView() {
       percentage: pct,
       studentName: info.name,
       studentId: info.id,
-      program: studentReportResults[0]?.program || info.program || activeProgram || 'Standard 5',
+      program: studentReportResults[0]?.program || info.program || reportCardMeta?.student?.program || activeProgram || '',
     };
-  }, [studentReportResults, uniqueStudents, activeReportTargetId, studentProfile?.student_name, activeProgram]);
+  }, [studentReportResults, uniqueStudents, activeReportTargetId, studentProfile?.student_name, activeProgram, reportCardMeta]);
+
+  // Load the official report card meta (school, attendance, class teacher) for the open report card
+  useEffect(() => {
+    if (!showReportCard || !activeReportTargetId) {
+      setReportCardMeta(null);
+      return;
+    }
+    let cancelled = false;
+    setReportCardMetaLoading(true);
+    api.getStudentReportCardData({ student: activeReportTargetId })
+      .then((data) => { if (!cancelled) setReportCardMeta(data || null); })
+      .catch((err) => {
+        console.error('Error loading report card details:', err);
+        if (!cancelled) setReportCardMeta(null);
+      })
+      .finally(() => { if (!cancelled) setReportCardMetaLoading(false); });
+    return () => { cancelled = true; };
+  }, [showReportCard, activeReportTargetId]);
 
   // Filter evaluation students in modal
   const filteredPlanStudents = useMemo(() => {
@@ -620,14 +662,14 @@ export default function GradesView() {
               <button
                 key={w.student}
                 onClick={() => selectStudent(w.student)}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 shrink-0 ${
+                className={`min-h-[36px] sm:min-h-0 px-3.5 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 shrink-0 ${
                   isSelected
                     ? 'bg-brand-600 text-white shadow-xs'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                 }`}
               >
-                <span>{w.student_name}</span>
-                <span className="text-[10px] opacity-75">({w.relation || 'Ward'})</span>
+                <span className="truncate max-w-[160px] sm:max-w-none" title={w.student_name}>{w.student_name}</span>
+                <span className="text-[11px] sm:text-[10px] opacity-75">({w.relation || 'Ward'})</span>
               </button>
             );
           })}
@@ -635,13 +677,13 @@ export default function GradesView() {
       )}
 
       {/* Top Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h2 className="text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1 basis-[260px]">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+            <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
               {isStaff ? 'Class Assessment & Student Grades' : 'Academic Performance'}
             </h2>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 border border-brand-200/60 dark:border-brand-800">
+            <span className="px-2.5 py-0.5 rounded-full text-[11px] sm:text-[10px] font-bold whitespace-nowrap bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 border border-brand-200/60 dark:border-brand-800">
               {displayedResults.length} Results Recorded
             </span>
           </div>
@@ -652,13 +694,13 @@ export default function GradesView() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Teacher Gradebook & Exam Setup Actions */}
           {isStaff && (
             <>
               <button
                 onClick={() => openCreatePlanModal()}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold shadow-xs transition active:scale-95 shrink-0 border border-slate-200/80 dark:border-slate-700"
+                className="flex flex-1 sm:flex-none justify-center items-center gap-1.5 min-h-[36px] sm:min-h-0 px-3.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold shadow-xs transition active:scale-95 shrink-0 whitespace-nowrap border border-slate-200/80 dark:border-slate-700"
                 title="Create a new assessment plan for any standard"
               >
                 <Plus className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />
@@ -667,7 +709,7 @@ export default function GradesView() {
 
               <button
                 onClick={() => navigate('/assessment-tool')}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 shrink-0"
+                className="flex flex-1 sm:flex-none justify-center items-center gap-1.5 min-h-[36px] sm:min-h-0 px-3.5 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 shrink-0 whitespace-nowrap"
               >
                 <Calculator className="w-3.5 h-3.5" />
                 <span>Assessment Result Tool</span>
@@ -677,7 +719,7 @@ export default function GradesView() {
 
           <button
             onClick={() => navigate('/report-card-tool')}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 text-xs font-bold shadow-xs transition active:scale-95 shrink-0"
+            className="flex flex-1 sm:flex-none justify-center items-center gap-1.5 min-h-[36px] sm:min-h-0 px-3.5 py-1.5 rounded-xl whitespace-nowrap bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 text-xs font-bold shadow-xs transition active:scale-95 shrink-0"
           >
             <Printer className="w-3.5 h-3.5" />
             <span>Report Card Tool</span>
@@ -688,9 +730,9 @@ export default function GradesView() {
       {/* Filter Toolbar Card */}
       <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-3 shadow-xs">
         {/* Left: Program & Course Dropdowns + Reset */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5 min-w-0">
           {/* Program / Standard Dropdown */}
-          <div className="relative">
+          <div className="relative w-full sm:w-auto">
             <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 dark:text-slate-500">
               <Layers className="w-4 h-4" />
             </div>
@@ -698,7 +740,7 @@ export default function GradesView() {
               id="program-filter-dropdown"
               value={selectedProgramFilter}
               onChange={(e) => setSelectedProgramFilter(e.target.value)}
-              className="appearance-none bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-9 pr-8 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs cursor-pointer transition min-w-[170px]"
+              className="appearance-none bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-9 pr-8 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs cursor-pointer transition w-full sm:w-auto sm:min-w-[170px] min-h-[36px] sm:min-h-0 truncate"
             >
               <option value="all">All Standards & Programs</option>
               {availablePrograms.map((prog) => (
@@ -711,7 +753,7 @@ export default function GradesView() {
           </div>
 
           {/* Course / Subject Dropdown */}
-          <div className="relative">
+          <div className="relative w-full sm:w-auto">
             <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 dark:text-slate-500">
               <BookOpen className="w-4 h-4" />
             </div>
@@ -719,7 +761,7 @@ export default function GradesView() {
               id="course-filter-dropdown"
               value={selectedCourseFilter}
               onChange={(e) => setSelectedCourseFilter(e.target.value)}
-              className="appearance-none bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-9 pr-8 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs cursor-pointer transition min-w-[140px]"
+              className="appearance-none bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-9 pr-8 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs cursor-pointer transition w-full sm:w-auto sm:min-w-[140px] min-h-[36px] sm:min-h-0 truncate"
             >
               <option value="all">All Subjects</option>
               {availableCourses.map((c) => (
@@ -760,7 +802,7 @@ export default function GradesView() {
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-bold"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-bold"
                 title="Clear search"
               >
                 ✕
@@ -772,12 +814,12 @@ export default function GradesView() {
 
       {/* Active Grading Scale Indicator Banner */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs min-w-0">
           <span className="font-semibold text-slate-500 dark:text-slate-400">Grading Scale:</span>
           {gradingScaleLoading ? (
             <span className="text-slate-400 text-xs animate-pulse">Loading scale...</span>
           ) : gradingScaleData?.grading_scale ? (
-            <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-200/60 dark:border-emerald-800 text-[11px]">
+            <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-200/60 dark:border-emerald-800 text-[11px] break-words max-w-full">
               {gradingScaleData.grading_scale}
             </span>
           ) : (
@@ -787,7 +829,7 @@ export default function GradesView() {
           )}
         </div>
         {intervals.length > 0 && (
-          <div className="hidden md:flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+          <div className="hidden md:flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
             <span className="font-medium">Scale Boundaries:</span>
             {intervals.map((inv) => (
               <span key={inv.grade} className="font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">
@@ -801,12 +843,12 @@ export default function GradesView() {
       {/* KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         {/* Card 1: Average */}
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">
+        <div className="glass-panel p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 min-w-0">
+          <span className="block text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase break-words">
             {isStaff ? 'Class Average' : 'Cumulative Avg'}
           </span>
-          <div className="mt-2 text-2xl font-black text-brand-600 dark:text-brand-400">
-            {overallPercentage}%
+          <div className="mt-2 text-xl sm:text-2xl font-black text-brand-600 dark:text-brand-400">
+            {overallPercentage === null ? '—' : `${overallPercentage}%`}
           </div>
           <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
             Overall Grade: <span className="font-bold text-emerald-600 dark:text-emerald-400">{overallGrade}</span>
@@ -814,11 +856,11 @@ export default function GradesView() {
         </div>
 
         {/* Card 2: Count */}
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">
+        <div className="glass-panel p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 min-w-0">
+          <span className="block text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase break-words">
             {isStaff ? 'Assessments Recorded' : 'Exams Recorded'}
           </span>
-          <div className="mt-2 text-2xl font-black text-slate-900 dark:text-slate-100">
+          <div className="mt-2 text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100">
             {displayedResults.length}
           </div>
           <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
@@ -829,9 +871,9 @@ export default function GradesView() {
         </div>
 
         {/* Card 3: Top Subject */}
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Top Subject</span>
-          <div className="mt-2 text-base font-black text-emerald-600 dark:text-emerald-400 truncate">
+        <div className="glass-panel p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 min-w-0">
+          <span className="block text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase break-words">Top Subject</span>
+          <div className="mt-2 text-base font-black text-emerald-600 dark:text-emerald-400 truncate" title={topCourse || undefined}>
             {topCourse || 'None'}
           </div>
           <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
@@ -840,24 +882,32 @@ export default function GradesView() {
         </div>
 
         {/* Card 4: Standing / Pass Rate */}
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">
+        <div className="glass-panel p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 min-w-0">
+          <span className="block text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase break-words">
             {isStaff ? 'Class Pass Rate' : 'Standing'}
           </span>
-          <div className="mt-2 text-base font-black text-indigo-600 dark:text-indigo-400">
-            {isStaff ? `${passRate}% Passed` : 'First Class'}
+          <div className="mt-2 text-base font-black text-indigo-600 dark:text-indigo-400 break-words sm:truncate">
+            {isStaff
+              ? (passRate === null ? '—' : `${passRate}% Passed`)
+              : (overallPercentage === null
+                  ? 'No results yet'
+                  : (overallGradeDescription || `Grade ${overallGrade}`))}
           </div>
           <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-            {isStaff 
-              ? `${distinctionCount} scored Grade ${secondTopGrade || topGrade}` 
-              : 'Distinction caliber'}
+            {isStaff
+              ? (topGrade
+                  ? `${distinctionCount} scored Grade ${secondTopGrade || topGrade} or above`
+                  : 'Grading scale unavailable')
+              : (overallPassed === null
+                  ? (gradingScaleData?.grading_scale ? 'Awaiting published results' : 'Grading scale unavailable')
+                  : `${overallPassed ? 'Above' : 'Below'} pass mark (${passPercentage}%)`)}
           </p>
         </div>
       </div>
 
       {/* Teacher Guidance & Feedback Highlight Banner (For Student & Guardian) */}
       {!isStaff && displayedResults.some(r => r.comment && r.comment.trim() !== '') && (
-        <div className="p-5 rounded-3xl bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/30 dark:border-amber-500/20 backdrop-blur-xs flex flex-col sm:flex-row sm:items-start justify-between gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/30 dark:border-amber-500/20 backdrop-blur-xs flex flex-col sm:flex-row sm:items-start justify-between gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
           <div className="flex items-start gap-3.5 min-w-0">
             <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-sm mt-0.5">
               <MessageSquareQuote className="w-5 h-5" />
@@ -867,14 +917,14 @@ export default function GradesView() {
                 <span className="text-xs font-black uppercase tracking-wider text-amber-800 dark:text-amber-300">
                   Teacher's Guidance &amp; Subject Remarks
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-200/80 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200 border border-amber-300/50 dark:border-amber-700">
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold break-words max-w-full bg-amber-200/80 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200 border border-amber-300/50 dark:border-amber-700">
                   {displayedResults.find(r => r.comment && r.comment.trim() !== '')?.course}
                 </span>
-                <span className="text-[10px] text-slate-400 font-mono">
+                <span className="text-[11px] sm:text-[10px] text-slate-400 font-mono break-all">
                   {displayedResults.find(r => r.comment && r.comment.trim() !== '')?.assessment_group}
                 </span>
               </div>
-              <p className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-slate-100 italic leading-snug">
+              <p className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-slate-100 italic leading-snug break-words">
                 "{displayedResults.find(r => r.comment && r.comment.trim() !== '')?.comment}"
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -886,7 +936,7 @@ export default function GradesView() {
           <button
             type="button"
             onClick={() => setSelectedDetailResult(displayedResults.find(r => r.comment && r.comment.trim() !== ''))}
-            className="self-start sm:self-center px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs shrink-0"
+            className="w-full sm:w-auto justify-center self-start sm:self-center px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs shrink-0"
           >
             <Eye className="w-3.5 h-3.5" />
             <span>View Breakdown</span>
@@ -896,9 +946,9 @@ export default function GradesView() {
 
       {/* Graded Assessments Table */}
       <div className="glass-panel rounded-3xl border border-slate-200/80 dark:border-slate-800 overflow-hidden shadow-xs">
-        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <GraduationCap className="w-4 h-4 text-brand-600 dark:text-brand-400" />
+        <div className="px-4 sm:px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <GraduationCap className="w-4 h-4 shrink-0 text-brand-600 dark:text-brand-400" />
             <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
               {isStaff ? 'All Student Assessment Records' : 'Graded Assessments'}
             </h3>
@@ -909,12 +959,23 @@ export default function GradesView() {
         </div>
 
         {loading ? (
-          <div className="p-12 text-center text-slate-400 text-sm">
+          <div className="p-8 sm:p-12 text-center text-slate-400 text-sm">
             <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
             Loading assessment scores and student grades...
           </div>
+        ) : resultsError ? (
+          <div className="p-8 sm:p-12 text-center text-xs text-rose-600 dark:text-rose-400 space-y-2">
+            <AlertCircle className="w-6 h-6 mx-auto" />
+            <p className="font-semibold break-words">{resultsError}</p>
+            <button
+              onClick={fetchResults}
+              className="px-4 py-2 sm:px-3 sm:py-1 rounded-lg bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 font-semibold"
+            >
+              Retry
+            </button>
+          </div>
         ) : displayedResults.length === 0 ? (
-          <div className="p-12 text-center">
+          <div className="p-8 sm:p-12 text-center">
             <GraduationCap className="w-10 h-10 text-slate-300 dark:text-slate-700 mx-auto mb-2" />
             <p className="text-xs font-semibold text-slate-600 dark:text-slate-400">
               No published assessment results match the current filters.
@@ -933,7 +994,97 @@ export default function GradesView() {
             )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Mobile stacked card list (< md) */}
+          <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800">
+            {displayedResults.map((row, idx) => {
+              const pct = row.maximum_score > 0 ? Math.round((row.total_score / row.maximum_score) * 100) : 0;
+              const calculatedGrade = gradeForResult(row, pct);
+              return (
+                <div key={row.name || idx} className="p-4 space-y-3 text-xs">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 space-y-0.5">
+                      {isStaff && (
+                        <div className="flex items-baseline gap-1.5 min-w-0">
+                          <span className="font-bold text-slate-900 dark:text-slate-100 truncate" title={row.student_name || row.student}>
+                            {row.student_name || row.student}
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-mono truncate shrink-0 max-w-[45%]" title={row.student}>
+                            {row.student}
+                          </span>
+                        </div>
+                      )}
+                      <div className="font-bold text-sm text-slate-900 dark:text-slate-100 break-words">
+                        {row.course}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-semibold text-slate-600 dark:text-slate-300 break-words max-w-full">
+                          {row.program || '—'}
+                        </span>
+                        <span className="font-medium break-words min-w-0">{row.assessment_group || '—'}</span>
+                      </div>
+                    </div>
+                    <span className={`shrink-0 inline-block px-3 py-1 rounded-full text-xs font-bold border ${getGradeBadgeTheme(calculatedGrade)}`}>
+                      {calculatedGrade}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="shrink-0 font-semibold text-slate-800 dark:text-slate-200">
+                      <span>{row.total_score}</span>
+                      <span className="text-slate-400 font-normal"> / {row.maximum_score}</span>
+                      <span className="text-[11px] text-slate-400 ml-1.5 font-medium">({pct}%)</span>
+                    </div>
+                    <div className="flex-1 bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                      <div
+                        className="bg-brand-600 dark:bg-brand-500 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {row.comment && row.comment.trim() !== '' ? (
+                    <div className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200/60 dark:border-amber-900/60">
+                      <MessageSquareQuote className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                      <p className="min-w-0 font-bold text-slate-900 dark:text-slate-100 italic leading-snug break-words">
+                        "{row.comment}"
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-slate-400 dark:text-slate-500 text-[11px] italic">No feedback provided</p>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDetailResult(row)}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-[36px] px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 transition"
+                      title="View score breakdown & feedback details"
+                    >
+                      <Eye className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />
+                      <span>Details</span>
+                    </button>
+                    {isStaff && (
+                      <button
+                        onClick={() => {
+                          setSelectedReportStudent(row.student);
+                          setShowReportCard(true);
+                        }}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-[36px] px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 transition"
+                        title={`Generate report card for ${row.student_name || row.student}`}
+                      >
+                        <FileText className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />
+                        <span>Report Card</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Desktop / tablet table (md+) */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-[750px]">
               <thead>
                 <tr className="bg-slate-50/70 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
@@ -963,10 +1114,10 @@ export default function GradesView() {
                               {studentInitial}
                             </div>
                             <div className="min-w-0">
-                              <div className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                              <div className="font-bold text-slate-900 dark:text-slate-100 truncate max-w-[200px]" title={row.student_name || row.student}>
                                 {row.student_name || row.student}
                               </div>
-                              <div className="text-[10px] text-slate-400 font-mono">
+                              <div className="text-[11px] sm:text-[10px] text-slate-400 font-mono">
                                 {row.student}
                               </div>
                             </div>
@@ -982,13 +1133,13 @@ export default function GradesView() {
                       {/* Program */}
                       <td className="py-3.5 px-6">
                         <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                          {row.program || 'General'}
+                          {row.program || '—'}
                         </span>
                       </td>
 
                       {/* Assessment Group */}
                       <td className="py-3.5 px-6 text-slate-600 dark:text-slate-300 font-medium">
-                        {row.assessment_group || 'Term Exam'}
+                        {row.assessment_group || '—'}
                       </td>
 
                       {/* Score */}
@@ -1011,7 +1162,7 @@ export default function GradesView() {
                       {/* Grade Badge */}
                       <td className="py-3.5 px-6 text-center">
                         {(() => {
-                          const calculatedGrade = calculateGradeFromScale(pct, intervals);
+                          const calculatedGrade = gradeForResult(row, pct);
                           return (
                             <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold border ${getGradeBadgeTheme(calculatedGrade)}`}>
                               {calculatedGrade}
@@ -1028,10 +1179,10 @@ export default function GradesView() {
                               <MessageSquareQuote className="w-3.5 h-3.5" />
                             </span>
                             <div className="min-w-0">
-                              <p className="text-xs font-bold text-slate-900 dark:text-slate-100 italic leading-snug">
+                              <p className="text-xs font-bold text-slate-900 dark:text-slate-100 italic leading-snug break-words">
                                 "{row.comment}"
                               </p>
-                              <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
+                              <span className="text-[11px] sm:text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
                                 Teacher's Feedback
                               </span>
                             </div>
@@ -1077,18 +1228,19 @@ export default function GradesView() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
 
       {/* Teacher / Faculty Grade Assessment Modal */}
       {showGradeModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-4xl w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-5 animate-in fade-in zoom-in-95 max-h-[90vh] flex flex-col">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-4xl w-full p-4 sm:p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-4 sm:space-y-5 animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto overscroll-contain flex flex-col">
             {/* Modal Header */}
-            <div className="flex items-start justify-between pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
-              <div className="space-y-1">
+            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="space-y-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold">
+                  <div className="w-8 h-8 shrink-0 rounded-xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold">
                     <Edit3 className="w-4 h-4" />
                   </div>
                   <div>
@@ -1104,7 +1256,7 @@ export default function GradesView() {
 
               <button
                 onClick={() => setShowGradeModal(false)}
-                className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
+                className="w-9 h-9 sm:w-8 sm:h-8 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1112,10 +1264,10 @@ export default function GradesView() {
 
             {/* Plan Selector & Quick Metadata Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3 min-w-0">
                 {/* Standard Filter Dropdown */}
-                <div className="relative">
-                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">
+                <div className="relative w-full sm:w-auto">
+                  <label className="block text-[11px] sm:text-[10px] uppercase font-bold text-slate-400 mb-0.5">
                     Standard / Class
                   </label>
                   <select
@@ -1130,7 +1282,7 @@ export default function GradesView() {
                         setSelectedPlanId(matching[0].name);
                       }
                     }}
-                    className="appearance-none bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl pl-3 pr-8 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 cursor-pointer shadow-xs min-w-[130px]"
+                    className="appearance-none bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl pl-3 pr-8 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 cursor-pointer shadow-xs w-full sm:w-auto sm:min-w-[130px]"
                   >
                     <option value="all">All Standards</option>
                     {uniquePlanPrograms.map(prog => (
@@ -1141,9 +1293,9 @@ export default function GradesView() {
                 </div>
 
                 {/* Assessment Plan Selector */}
-                <div className="relative">
+                <div className="relative w-full sm:w-auto min-w-0">
                   <div className="flex items-center justify-between mb-0.5">
-                    <label className="block text-[10px] uppercase font-bold text-slate-400">
+                    <label className="block text-[11px] sm:text-[10px] uppercase font-bold text-slate-400">
                       Assessment Plan
                     </label>
                     <button
@@ -1159,7 +1311,7 @@ export default function GradesView() {
                   <select
                     value={selectedPlanId}
                     onChange={(e) => setSelectedPlanId(e.target.value)}
-                    className="appearance-none bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl pl-3 pr-8 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 cursor-pointer shadow-xs min-w-[280px]"
+                    className="appearance-none bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl pl-3 pr-8 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 cursor-pointer shadow-xs w-full sm:w-auto sm:min-w-[280px] max-w-full truncate"
                   >
                     {filteredAssessmentPlans.length === 0 ? (
                       <option value="">No plans found for {gradebookProgramFilter}</option>
@@ -1175,11 +1327,11 @@ export default function GradesView() {
                 </div>
 
                 {activePlanDoc && (
-                  <div className="pt-3 flex flex-wrap items-center gap-2">
+                  <div className="sm:pt-3 flex flex-wrap items-center gap-2">
                     <span className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 text-xs font-bold border border-indigo-200/60 dark:border-indigo-800">
                       Max: {totalMaxScore} marks
                     </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-200/60 dark:border-emerald-800">
+                    <span className="px-2.5 py-1 rounded-lg break-words max-w-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-200/60 dark:border-emerald-800">
                       Scale: {planGradingScaleData?.grading_scale || activePlanDoc.grading_scale || 'Grading Scale'}
                     </span>
                   </div>
@@ -1187,7 +1339,7 @@ export default function GradesView() {
               </div>
 
               {/* Search inside roster */}
-              <div className="relative pt-3 sm:pt-0 sm:w-60">
+              <div className="relative w-full sm:w-60 shrink-0">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
@@ -1200,7 +1352,7 @@ export default function GradesView() {
             </div>
 
             {/* Student Mark Entry Table */}
-            <div className="flex-1 min-h-0 overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-2xl">
+            <div className="flex-1 min-h-[220px] overflow-auto border border-slate-200 dark:border-slate-800 rounded-2xl">
               {evalLoading ? (
                 <div className="p-10 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
                   <div className="w-4 h-4 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
@@ -1211,15 +1363,15 @@ export default function GradesView() {
                   No enrolled students found for this assessment plan.
                 </div>
               ) : (
-                <table className="w-full text-left text-xs">
+                <table className="w-full min-w-[640px] text-left text-xs">
                   <thead className="sticky top-0 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 z-10">
                     <tr className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase">
                       <th className="py-2.5 px-4 w-12 text-center">Roll</th>
-                      <th className="py-2.5 px-4">Student</th>
+                      <th className="py-2.5 px-3 sm:px-4 sticky left-0 z-10 bg-slate-100 dark:bg-slate-800">Student</th>
                       {planCriteria.map(c => (
                         <th key={c.assessment_criteria} className="py-2.5 px-3 text-center min-w-[110px]">
                           <div>{c.assessment_criteria}</div>
-                          <div className="text-[10px] text-slate-400 font-normal">Max: {c.maximum_score}</div>
+                          <div className="text-[11px] sm:text-[10px] text-slate-400 font-normal">Max: {c.maximum_score}</div>
                         </th>
                       ))}
                       <th className="py-2.5 px-3 text-center w-24">Total</th>
@@ -1245,9 +1397,9 @@ export default function GradesView() {
                           <td className="py-2.5 px-4 text-center font-mono text-slate-500 font-bold">
                             {stu.group_roll_number || idx + 1}
                           </td>
-                          <td className="py-2.5 px-4">
-                            <div className="font-bold text-slate-900 dark:text-slate-100">{stu.student_name}</div>
-                            <div className="text-[10px] text-slate-400 font-mono">{stu.student}</div>
+                          <td className="py-2.5 px-3 sm:px-4 sticky left-0 z-[1] bg-white dark:bg-slate-900">
+                            <div className="font-bold text-slate-900 dark:text-slate-100 truncate max-w-[140px] sm:max-w-none" title={stu.student_name}>{stu.student_name}</div>
+                            <div className="text-[11px] sm:text-[10px] text-slate-400 font-mono">{stu.student}</div>
                           </td>
 
                           {planCriteria.map(c => {
@@ -1270,7 +1422,7 @@ export default function GradesView() {
 
                           <td className="py-2 px-3 text-center font-bold text-slate-900 dark:text-slate-100">
                             <span>{currentTotal}</span>
-                            <span className="text-[10px] text-slate-400 ml-1">({pct}%)</span>
+                            <span className="text-[11px] sm:text-[10px] text-slate-400 ml-1">({pct}%)</span>
                           </td>
 
                           <td className="py-2 px-3 text-center">
@@ -1299,7 +1451,7 @@ export default function GradesView() {
             {evalSuccessMsg && (
               <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
-                <span>{evalSuccessMsg}</span>
+                <span className="min-w-0 break-words">{evalSuccessMsg}</span>
               </div>
             )}
 
@@ -1309,7 +1461,7 @@ export default function GradesView() {
                 {planStudents.length} students enrolled in {activePlanDoc?.student_group}
               </span>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setShowGradeModal(false)}
@@ -1322,7 +1474,7 @@ export default function GradesView() {
                   type="button"
                   onClick={() => handleSaveMarks(false)}
                   disabled={evalSaving || evalLoading}
-                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition disabled:opacity-50"
+                  className="flex-1 sm:flex-none px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition disabled:opacity-50"
                 >
                   {evalSaving ? 'Saving...' : 'Save Draft'}
                 </button>
@@ -1331,7 +1483,7 @@ export default function GradesView() {
                   type="button"
                   onClick={() => handleSaveMarks(true)}
                   disabled={evalSaving || evalLoading}
-                  className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                  className="w-full sm:w-auto justify-center whitespace-nowrap px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 disabled:opacity-50 flex items-center gap-2"
                 >
                   {evalSaving ? (
                     <>
@@ -1371,13 +1523,13 @@ export default function GradesView() {
 
                   {/* Student Switcher for Teachers/Staff or Guardians with multiple wards */}
                   {(isStaff || (isGuardian && uniqueStudents.length > 1)) && (
-                    <div className="flex items-center gap-1.5 ml-0 sm:ml-2">
-                      <span className="text-xs font-bold text-slate-700">Student:</span>
-                      <div className="relative">
+                    <div className="flex items-center gap-1.5 ml-0 sm:ml-2 min-w-0 max-w-full">
+                      <span className="text-xs font-bold text-slate-700 shrink-0">Student:</span>
+                      <div className="relative min-w-0">
                         <select
                           value={activeReportTargetId}
                           onChange={(e) => setSelectedReportStudent(e.target.value)}
-                          className="appearance-none bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl pl-3 pr-7 py-1 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500/20 cursor-pointer shadow-xs transition"
+                          className="appearance-none max-w-[220px] sm:max-w-xs truncate bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl pl-3 pr-7 py-1.5 sm:py-1 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500/20 cursor-pointer shadow-xs transition"
                         >
                           {uniqueStudents.map((s) => (
                             <option key={s.id} value={s.id}>
@@ -1391,17 +1543,17 @@ export default function GradesView() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 ml-auto">
                   <button
                     onClick={() => window.print()}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95"
+                    className="flex items-center gap-1.5 min-h-[36px] sm:min-h-0 px-3.5 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95"
                   >
                     <Printer className="w-3.5 h-3.5" />
                     <span>Print / Save PDF</span>
                   </button>
                   <button
                     onClick={() => setShowReportCard(false)}
-                    className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition"
+                    className="p-2 sm:p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition"
                     title="Close"
                   >
                     <X className="w-5 h-5" />
@@ -1410,10 +1562,10 @@ export default function GradesView() {
               </div>
 
               {/* Printable Document Body */}
-              <div className="border-2 sm:border-4 border-double border-slate-300 p-4 sm:p-7 rounded-2xl relative overflow-hidden bg-white">
+              <div className="border-2 sm:border-4 border-double border-slate-300 p-3 sm:p-7 rounded-2xl relative overflow-hidden bg-white">
                 {/* Watermark */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.03]">
-                  <GraduationCap className="w-80 h-80 sm:w-96 sm:h-96 text-slate-900" />
+                  <GraduationCap className="w-60 h-60 sm:w-96 sm:h-96 print:w-96 print:h-96 text-slate-900" />
                 </div>
 
                 {/* School Header */}
@@ -1421,54 +1573,58 @@ export default function GradesView() {
                   <div className="inline-flex items-center justify-center w-11 h-11 rounded-2xl bg-slate-900 text-white mb-1 shadow-xs">
                     <GraduationCap className="w-6 h-6 text-amber-400" />
                   </div>
-                  <h1 className="text-xl sm:text-2xl font-black uppercase tracking-tight text-slate-900">
-                    ABC International School
+                  <h1 className="text-lg sm:text-2xl font-black uppercase tracking-tight text-slate-900 break-words">
+                    {reportCardMeta?.school?.name || schoolSettings?.name || (reportCardMetaLoading ? 'Loading…' : '')}
                   </h1>
-                  <p className="text-[11px] sm:text-xs font-semibold text-slate-600 tracking-wide uppercase">
-                    Excellence in Global Learning & Holistic Education
-                  </p>
-                  <p className="text-[10px] sm:text-[11px] text-slate-500">
-                    Affiliation No. 2026-EDU-ABC · Academic Session {activeAcademicYear || '2026-2027'}
-                  </p>
+                  {reportCardMeta?.school?.address && (
+                    <p className="text-[11px] sm:text-xs font-semibold text-slate-600 tracking-wide uppercase break-words">
+                      {reportCardMeta.school.address}
+                    </p>
+                  )}
+                  {(reportCardMeta?.student?.academic_year || activeAcademicYear) && (
+                    <p className="text-[11px] text-slate-500">
+                      Academic Session {reportCardMeta?.student?.academic_year || activeAcademicYear}
+                    </p>
+                  )}
                   <div className="pt-1.5">
-                    <span className="inline-block px-3.5 py-1 rounded-full bg-slate-900 text-amber-300 text-[11px] sm:text-xs font-black uppercase tracking-widest">
-                      Annual / Term 1 Progress Report Card
+                    <span className="inline-block max-w-full px-3.5 py-1 rounded-full bg-slate-900 text-amber-300 text-[11px] sm:text-xs font-black uppercase tracking-wider sm:tracking-widest">
+                      Progress Report Card
                     </span>
                   </div>
                 </div>
 
                 {/* Student Demographics Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 py-5 border-b border-slate-200 text-xs relative z-10">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Student Name</span>
-                    <span className="font-extrabold text-slate-900 text-xs sm:text-sm truncate block">
+                <div className="grid grid-cols-2 sm:grid-cols-4 print:grid-cols-4 gap-3 sm:gap-4 py-4 sm:py-5 border-b border-slate-200 text-xs relative z-10">
+                  <div className="min-w-0">
+                    <span className="text-[11px] sm:text-[10px] uppercase font-bold text-slate-400 block">Student Name</span>
+                    <span className="font-extrabold text-slate-900 text-xs sm:text-sm truncate block" title={reportCardStats.studentName}>
                       {reportCardStats.studentName}
                     </span>
                   </div>
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Student ID / Roll</span>
-                    <span className="font-bold text-slate-900 font-mono text-xs truncate block">
+                  <div className="min-w-0">
+                    <span className="text-[11px] sm:text-[10px] uppercase font-bold text-slate-400 block">Student ID / Roll</span>
+                    <span className="font-bold text-slate-900 font-mono text-xs truncate block" title={reportCardStats.studentId}>
                       {reportCardStats.studentId}
                     </span>
                   </div>
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Standard / Class</span>
-                    <span className="font-bold text-slate-900 text-xs truncate block">
+                  <div className="min-w-0">
+                    <span className="text-[11px] sm:text-[10px] uppercase font-bold text-slate-400 block">Standard / Class</span>
+                    <span className="font-bold text-slate-900 text-xs truncate block" title={reportCardStats.program}>
                       {reportCardStats.program}
                     </span>
                   </div>
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Evaluation Term</span>
+                  <div className="min-w-0">
+                    <span className="text-[11px] sm:text-[10px] uppercase font-bold text-slate-400 block">Evaluation Term</span>
                     <span className="font-bold text-slate-900 text-xs truncate block">
-                      Term 1 Comprehensive
+                      {reportCardMeta?.student?.academic_term || 'All Terms'}
                     </span>
                   </div>
                 </div>
 
                 {/* Academic Performance Table */}
                 <div className="py-4 relative z-10">
-                  <div className="overflow-x-auto rounded-lg border border-slate-200">
-                    <table className="w-full text-left text-xs">
+                  <div className="overflow-x-auto print:overflow-visible rounded-lg border border-slate-200">
+                    <table className="w-full min-w-[520px] print:min-w-0 text-left text-xs">
                       <thead>
                         <tr className="bg-slate-100 border-b border-slate-200 text-[11px] font-bold text-slate-700 uppercase">
                           <th className="py-2.5 px-3 w-12 text-center">S.No</th>
@@ -1496,7 +1652,7 @@ export default function GradesView() {
                                 <td className="py-2.5 px-3 text-center font-medium">{row.maximum_score}</td>
                                 <td className="py-2.5 px-3 text-center font-bold text-slate-900">{row.total_score}</td>
                                 <td className="py-2.5 px-3 text-center font-semibold">{pct}%</td>
-                                <td className="py-2.5 px-3 text-center font-black">{calculateGradeFromScale(pct, intervals)}</td>
+                                <td className="py-2.5 px-3 text-center font-black">{gradeForResult(row, pct)}</td>
                               </tr>
                             );
                           })
@@ -1509,9 +1665,9 @@ export default function GradesView() {
                           </td>
                           <td className="py-3 px-3 text-center">{reportCardStats.max}</td>
                           <td className="py-3 px-3 text-center font-black text-brand-700">{reportCardStats.total}</td>
-                          <td className="py-3 px-3 text-center font-black">{reportCardStats.percentage}%</td>
+                          <td className="py-3 px-3 text-center font-black">{reportCardStats.percentage === null ? '—' : `${reportCardStats.percentage}%`}</td>
                           <td className="py-3 px-3 text-center font-black text-emerald-700 text-sm">
-                            {calculateGradeFromScale(reportCardStats.percentage, intervals)}
+                            {reportCardStats.percentage === null ? '—' : calculateGradeFromScale(reportCardStats.percentage, intervals)}
                           </td>
                         </tr>
                       </tfoot>
@@ -1521,9 +1677,9 @@ export default function GradesView() {
 
                 {/* Official Grading Scale Legend */}
                 {intervals.length > 0 && (
-                  <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-[10px] text-slate-600 flex flex-wrap items-center justify-between gap-2 relative z-10">
+                  <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-[11px] sm:text-[10px] text-slate-600 flex flex-wrap items-center justify-between gap-2 relative z-10">
                     <span className="font-bold text-slate-700 uppercase">Grading Scale ({gradingScaleData?.grading_scale}):</span>
-                    <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                       {intervals.map((inv) => (
                         <span key={inv.grade} className="font-mono">
                           <strong className="text-slate-900">{inv.grade}</strong>: ≥{inv.min_percentage}% {inv.description ? `(${inv.description})` : ''}
@@ -1535,23 +1691,37 @@ export default function GradesView() {
 
                 {/* Result Summary & Endorsement */}
                 <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Overall Assessment Result</span>
+                  <div className="min-w-0">
+                    <span className="text-[11px] sm:text-[10px] uppercase font-bold text-slate-400 block">Overall Assessment Result</span>
                     {(() => {
+                      if (reportCardStats.percentage === null) {
+                        return (
+                          <span className="text-xs sm:text-sm font-black uppercase tracking-wide text-slate-500">
+                            No published results
+                          </span>
+                        );
+                      }
                       const aggregateGrade = calculateGradeFromScale(reportCardStats.percentage, intervals);
-                      const passed = isPassingGrade(aggregateGrade, intervals);
+                      const passed = isPassingPercentage(reportCardStats.percentage, intervals, passPercentage);
+                      const description = getGradeDescription(aggregateGrade, intervals);
                       return (
-                        <span className={`text-xs sm:text-sm font-black uppercase tracking-wide ${passed ? 'text-emerald-700' : 'text-rose-700'}`}>
-                          {passed ? 'PASSED WITH MERIT & DISTINCTION' : 'NEEDS IMPROVEMENT'}
+                        <span className={`text-xs sm:text-sm font-black uppercase tracking-wide ${passed === false ? 'text-rose-700' : 'text-emerald-700'}`}>
+                          {passed === null ? `Grade ${aggregateGrade}` : (passed ? 'Passed' : 'Needs Improvement')}
+                          {description ? ` · ${description}` : ''}
                         </span>
                       );
                     })()}
-                    <p className="text-[11px] text-slate-500 mt-0.5">
-                      Eligible for subsequent academic term enrollment and promotion.
+                    <p className="text-[11px] text-slate-500 mt-0.5 break-words">
+                      {passPercentage !== null
+                        ? `Pass mark under ${gradingScaleData?.grading_scale}: ${passPercentage}%`
+                        : 'Grading scale unavailable'}
+                      {reportCardMeta?.attendance?.percentage !== null && reportCardMeta?.attendance?.percentage !== undefined
+                        ? ` · Attendance ${reportCardMeta.attendance.percentage}% (${reportCardMeta.attendance.present}/${reportCardMeta.attendance.total} days)`
+                        : ''}
                     </p>
                   </div>
                   <div className="text-left sm:text-right shrink-0">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Cumulative Score</span>
+                    <span className="text-[11px] sm:text-[10px] uppercase font-bold text-slate-400 block">Cumulative Score</span>
                     <span className="text-base sm:text-lg font-black text-slate-900">
                       {reportCardStats.total} / {reportCardStats.max}
                     </span>
@@ -1559,24 +1729,24 @@ export default function GradesView() {
                 </div>
 
                 {/* Official Signatures */}
-                <div className="pt-8 sm:pt-10 grid grid-cols-3 gap-3 sm:gap-6 text-center text-xs relative z-10">
+                <div className="pt-8 sm:pt-10 grid grid-cols-1 sm:grid-cols-3 print:grid-cols-3 gap-6 text-center text-xs relative z-10">
                   <div>
-                    <div className="border-b border-slate-400 pb-1 mb-1 font-serif italic text-slate-600 text-xs sm:text-sm">
-                      Anjali Verma
+                    <div className="border-b border-slate-400 pb-1 mb-1 font-serif italic text-slate-600 text-xs sm:text-sm min-h-[1.5rem]">
+                      {reportCardMeta?.student?.class_teacher || '\u00a0'}
                     </div>
-                    <span className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-500 block">Class Teacher</span>
+                    <span className="text-[11px] sm:text-[10px] uppercase font-bold text-slate-500 block">Class Teacher</span>
                   </div>
                   <div>
-                    <div className="border-b border-slate-400 pb-1 mb-1 font-serif italic text-slate-600 text-xs sm:text-sm">
-                      Exam Cell (Verified)
+                    <div className="border-b border-slate-400 pb-1 mb-1 font-serif italic text-slate-600 text-xs sm:text-sm min-h-[1.5rem]">
+                      {'\u00a0'}
                     </div>
-                    <span className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-500 block">Controller of Exams</span>
+                    <span className="text-[11px] sm:text-[10px] uppercase font-bold text-slate-500 block">Controller of Exams</span>
                   </div>
                   <div>
-                    <div className="border-b border-slate-400 pb-1 mb-1 font-serif italic text-slate-600 text-xs sm:text-sm">
-                      Dr. S. K. Raman
+                    <div className="border-b border-slate-400 pb-1 mb-1 font-serif italic text-slate-600 text-xs sm:text-sm min-h-[1.5rem]">
+                      {'\u00a0'}
                     </div>
-                    <span className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-500 block">Principal</span>
+                    <span className="text-[11px] sm:text-[10px] uppercase font-bold text-slate-500 block">Principal</span>
                   </div>
                 </div>
               </div>
@@ -1585,14 +1755,14 @@ export default function GradesView() {
         </div>
       )}
 
-      {/* Modal: Create Assessment Plan (for Standard 5, 6, 7, etc.) */}
+      {/* Modal: Create Assessment Plan */}
       {isCreatePlanModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full shadow-2xl border border-slate-100 dark:border-slate-800 max-h-[92vh] flex flex-col my-auto overflow-hidden animate-in fade-in zoom-in-95">
             {/* Header */}
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 shrink-0 rounded-xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold">
                   <Plus className="w-4 h-4" />
                 </div>
                 <div>
@@ -1600,14 +1770,14 @@ export default function GradesView() {
                     Create Assessment Plan
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Configure exams & grading for Standard 5, 6, 7 or any section
+                    Configure exams & grading for any program or section
                   </p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsCreatePlanModalOpen(false)}
-                className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
+                className="w-9 h-9 sm:w-8 sm:h-8 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1618,7 +1788,7 @@ export default function GradesView() {
                 {createPlanError && (
                   <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>{createPlanError}</span>
+                    <span className="min-w-0 break-words">{createPlanError}</span>
                   </div>
                 )}
 
@@ -1639,7 +1809,7 @@ export default function GradesView() {
                             ...prev,
                             program: newProg,
                             student_group: matchingGroups[0]?.name || '',
-                            assessment_name: `Mid-Term Exam - ${prev.course || 'Subject'} (${newProg})`,
+
                           }));
                         }}
                         className="w-full appearance-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 pr-8 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -1690,7 +1860,7 @@ export default function GradesView() {
                           setCreatePlanForm(prev => ({
                             ...prev,
                             course: newCourse,
-                            assessment_name: `Mid-Term Exam - ${newCourse} (${prev.program})`,
+                            grading_scale: (planMeta.courses || []).find(c => c.name === newCourse)?.default_grading_scale || prev.grading_scale,
                           }));
                         }}
                         className="w-full appearance-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 pr-8 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -1733,7 +1903,7 @@ export default function GradesView() {
                     type="text"
                     value={createPlanForm.assessment_name}
                     onChange={(e) => setCreatePlanForm({ ...createPlanForm, assessment_name: e.target.value })}
-                    placeholder="e.g. Mid-Term Exam - Mathematics (Std 6)"
+                    placeholder="Defaults to Course - Student Group"
                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
                 </div>
@@ -1764,8 +1934,12 @@ export default function GradesView() {
                         onChange={(e) => setCreatePlanForm({ ...createPlanForm, criteria_preset: e.target.value })}
                         className="w-full appearance-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 pr-8 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
                       >
-                        <option value="performance_100">Class Performance (100 Marks)</option>
-                        <option value="written_80_oral_20">Written (80) + Oral (20)</option>
+                        {(planMeta.criteria || []).length === 0 && (
+                          <option value="">No Assessment Criteria configured</option>
+                        )}
+                        {(planMeta.criteria || []).map(c => (
+                          <option key={c.name} value={c.name}>{c.assessment_criteria || c.name} (100 Marks)</option>
+                        ))}
                       </select>
                       <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
@@ -1774,7 +1948,7 @@ export default function GradesView() {
               </div>
 
               {/* Footer Actions */}
-              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-2.5 shrink-0">
+              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 sm:gap-2.5 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsCreatePlanModalOpen(false)}
@@ -1785,7 +1959,7 @@ export default function GradesView() {
                 <button
                   type="submit"
                   disabled={creatingPlan}
-                  className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
+                  className="justify-center px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
                 >
                   {creatingPlan ? (
                     <>
@@ -1807,20 +1981,20 @@ export default function GradesView() {
 
       {/* Student / Guardian Result Breakdown & Feedback Modal */}
       {selectedDetailResult && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-5 animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-xl w-full max-h-[90vh] overflow-y-auto overscroll-contain p-5 sm:p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-5 animate-in fade-in zoom-in-95">
             {/* Header */}
-            <div className="flex items-start justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold shadow-xs">
+            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 shrink-0 rounded-2xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold shadow-xs">
                   <GraduationCap className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="font-extrabold text-base text-slate-900 dark:text-slate-100">
+                <div className="min-w-0">
+                  <h3 className="font-extrabold text-base text-slate-900 dark:text-slate-100 break-words">
                     {selectedDetailResult.course}
                   </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {selectedDetailResult.assessment_group || 'Term Exam'} · {selectedDetailResult.program}
+                  <p className="text-xs text-slate-500 dark:text-slate-400 break-words">
+                    {selectedDetailResult.assessment_name || selectedDetailResult.assessment_group || 'Assessment'}{selectedDetailResult.program ? ` · ${selectedDetailResult.program}` : ''}
                   </p>
                 </div>
               </div>
@@ -1828,28 +2002,28 @@ export default function GradesView() {
               <button
                 type="button"
                 onClick={() => setSelectedDetailResult(null)}
-                className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 transition"
+                className="shrink-0 p-2 sm:p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 transition"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Score & Grade Summary */}
-            <div className="grid grid-cols-3 gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 text-center">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-3 sm:p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 text-center">
               <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Score</span>
-                <span className="text-base font-black text-slate-900 dark:text-slate-100 font-mono">
+                <span className="text-[11px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Score</span>
+                <span className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100 font-mono break-words">
                   {selectedDetailResult.total_score} / {selectedDetailResult.maximum_score}
                 </span>
               </div>
               <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Percentage</span>
-                <span className="text-base font-black text-brand-600 dark:text-brand-400 font-mono">
+                <span className="text-[11px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Percentage</span>
+                <span className="text-sm sm:text-base font-black text-brand-600 dark:text-brand-400 font-mono">
                   {selectedDetailResult.maximum_score > 0 ? Math.round((selectedDetailResult.total_score / selectedDetailResult.maximum_score) * 100) : 0}%
                 </span>
               </div>
-              <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Final Grade</span>
+              <div className="col-span-2 sm:col-span-1">
+                <span className="text-[11px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Final Grade</span>
                 <span className={`inline-block px-2.5 py-0.5 mt-0.5 rounded-full text-xs font-black border ${getGradeBadgeTheme(selectedDetailResult.grade)}`}>
                   {selectedDetailResult.grade}
                 </span>
@@ -1864,7 +2038,7 @@ export default function GradesView() {
               </label>
               <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800/80">
                 {selectedDetailResult.comment && selectedDetailResult.comment.trim() !== '' ? (
-                  <p className="text-sm font-bold text-slate-900 dark:text-slate-100 italic leading-relaxed">
+                  <p className="text-sm font-bold text-slate-900 dark:text-slate-100 italic leading-relaxed break-words">
                     "{selectedDetailResult.comment}"
                   </p>
                 ) : (
@@ -1883,16 +2057,16 @@ export default function GradesView() {
                 </label>
                 <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200/80 dark:border-slate-800 rounded-2xl overflow-hidden">
                   {selectedDetailResult.details.map((d, i) => (
-                    <div key={i} className="p-3 bg-white dark:bg-slate-900 flex items-center justify-between text-xs">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                    <div key={i} className="p-3 bg-white dark:bg-slate-900 flex items-center justify-between gap-3 text-xs">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300 min-w-0 break-words">
                         {d.assessment_criteria}
                       </span>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
                           {d.score} / {d.maximum_score}
                         </span>
                         {d.grade && (
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${getGradeBadgeTheme(d.grade)}`}>
+                          <span className={`px-2 py-0.5 rounded text-[11px] sm:text-[10px] font-bold border ${getGradeBadgeTheme(d.grade)}`}>
                             {d.grade}
                           </span>
                         )}
@@ -1908,7 +2082,7 @@ export default function GradesView() {
               <button
                 type="button"
                 onClick={() => setSelectedDetailResult(null)}
-                className="px-5 py-2 rounded-xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-xs hover:bg-slate-800 transition"
+                className="w-full sm:w-auto px-5 py-2 rounded-xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-xs hover:bg-slate-800 transition"
               >
                 Close
               </button>

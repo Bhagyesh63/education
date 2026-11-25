@@ -32,7 +32,7 @@ class Course(Document):
         return topic_data
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_course_to_programs(course: str, programs: str, mandatory: bool = False):
     programs = json.loads(programs)
     for entry in programs:

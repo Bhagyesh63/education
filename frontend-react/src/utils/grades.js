@@ -46,14 +46,58 @@ export function isPassingGrade(grade, intervals) {
   }
 
   if (Array.isArray(intervals) && intervals.length > 0) {
-    const lastInterval = intervals[intervals.length - 1];
-    // The lowest interval (e.g. min_percentage: 0) represents failure
-    if (grade.toUpperCase() === String(lastInterval.grade).toUpperCase()) {
-      return false;
+    const threshold = getPassPercentage(intervals);
+    const match = intervals.find(i => String(i.grade).toUpperCase() === String(grade).toUpperCase());
+    if (match && threshold !== null) {
+      return Number(match.min_percentage) >= threshold;
     }
+    // The lowest interval (e.g. min_percentage: 0) represents failure
+    const lastInterval = intervals[intervals.length - 1];
+    return grade.toUpperCase() !== String(lastInterval.grade).toUpperCase();
   }
 
-  return grade.toUpperCase() !== 'F';
+  return false;
+}
+
+/**
+ * Minimum percentage required to pass under a Grading Scale. Mirrors the backend rule:
+ * a lowest band with a 0% threshold is the failing band, otherwise anything below the
+ * lowest threshold fails. Prefers an explicit `pass_percentage` returned by the API.
+ *
+ * @param {Array<{grade: string, min_percentage: number}>} intervals
+ * @param {number|null} [passPercentage]
+ * @returns {number|null}
+ */
+export function getPassPercentage(intervals, passPercentage = null) {
+  if (passPercentage !== null && passPercentage !== undefined && !isNaN(passPercentage)) {
+    return Number(passPercentage);
+  }
+  if (!Array.isArray(intervals) || intervals.length === 0) return null;
+  const lowest = intervals[intervals.length - 1];
+  if (Number(lowest.min_percentage) <= 0 && intervals.length > 1) {
+    return Number(intervals[intervals.length - 2].min_percentage);
+  }
+  return Number(lowest.min_percentage);
+}
+
+/**
+ * Whether a percentage passes under the given scale. Returns null if no scale is available.
+ */
+export function isPassingPercentage(percentage, intervals, passPercentage = null) {
+  const threshold = getPassPercentage(intervals, passPercentage);
+  if (threshold === null || percentage === null || percentage === undefined || isNaN(percentage)) {
+    return null;
+  }
+  return Number(percentage) >= threshold;
+}
+
+/**
+ * Description configured for a grade in the Grading Scale (e.g. 'Outstanding'), or ''.
+ */
+export function getGradeDescription(grade, intervals) {
+  if (!grade || !Array.isArray(intervals)) return '';
+  const match = intervals.find(i => String(i.grade).toUpperCase() === String(grade).toUpperCase());
+  return match?.description || '';
 }
 
 /**

@@ -4,15 +4,41 @@ set -e
 
 cd ~ || exit
 
-sudo apt update
-sudo apt remove mysql-server mysql-client
-sudo apt install libcups2-dev redis-server mariadb-client
+step() { echo "::endgroup::"; echo "::group::$*"; }
+echo "::group::start"
 
+# Anonymous git-over-HTTPS from runners gets throttled (401 mid-clone, see erpnext's CI):
+# authenticate clones with the job token via a credential helper that never stores it.
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    export CI_GITHUB_TOKEN="$GITHUB_TOKEN"
+    export GIT_CONFIG_COUNT=3
+    export GIT_CONFIG_KEY_0="credential.helper"
+    export GIT_CONFIG_VALUE_0=""
+    export GIT_CONFIG_KEY_1="credential.https://github.com.username"
+    export GIT_CONFIG_VALUE_1="x-access-token"
+    export GIT_CONFIG_KEY_2="credential.https://github.com.helper"
+    export GIT_CONFIG_VALUE_2='!f() { test "$1" = get && echo "password=$CI_GITHUB_TOKEN"; }; f'
+fi
+export GIT_TERMINAL_PROMPT=0
+
+step "system packages"
+sudo apt-get update
+sudo apt-get remove -y mysql-server mysql-client || true
+# libmariadb-dev + pkg-config: Frappe v16 builds the mysqlclient driver
+sudo apt-get install -y libcups2-dev redis-server mariadb-client libmariadb-dev pkg-config
+
+step "frappe-bench"
 pip install frappe-bench
 
-git clone https://github.com/frappe/frappe --branch version-15 --depth 1
+# This fork tracks Frappe/ERPNext v16 whatever its own branch is called (main, version-16, ...),
+# so upstream apps are always cloned from FRAPPE_BRANCH, not from this repo's branch name.
+FRAPPE_BRANCH="${FRAPPE_BRANCH:-version-16}"
+
+step "frappe ($FRAPPE_BRANCH) + bench init"
+git clone https://github.com/frappe/frappe --branch "$FRAPPE_BRANCH" --depth 1
 bench init --skip-assets --frappe-path ~/frappe --python "$(which python)" frappe-bench
 
+step "test site + database"
 mkdir ~/frappe-bench/sites/test_site
 cp -r "${GITHUB_WORKSPACE}/.github/helper/site_config.json" ~/frappe-bench/sites/test_site/
 
@@ -40,15 +66,19 @@ sed -i 's/schedule:/# schedule:/g' Procfile
 sed -i 's/socketio:/# socketio:/g' Procfile
 sed -i 's/redis_socketio:/# redis_socketio:/g' Procfile
 
-bench get-app payments --branch version-15
-bench get-app https://github.com/frappe/erpnext --branch version-15 --resolve-deps
+step "apps: payments, erpnext, education"
+bench get-app payments --branch "$FRAPPE_BRANCH"
+bench get-app https://github.com/frappe/erpnext --branch "$FRAPPE_BRANCH" --resolve-deps
 bench get-app education "${GITHUB_WORKSPACE}"
+step "requirements + build"
 bench setup requirements --dev
 bench build
 
+step "install apps on test_site"
 bench start &>> ~/frappe-bench/bench_start.log &
 CI=Yes bench build --app frappe &
 bench --site test_site reinstall --yes
 
 bench --verbose --site test_site install-app payments
 bench --verbose --site test_site install-app education
+echo "::endgroup::"

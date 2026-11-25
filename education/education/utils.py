@@ -121,7 +121,7 @@ def get_enrollment(master, document, student):
         return None
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def enroll_in_program(program_name: str, student: str | None = None):
     """Enroll student in program
 
@@ -138,6 +138,10 @@ def enroll_in_program(program_name: str, student: str | None = None):
 
     if not student == None:
         student = frappe.get_doc("Student", student)
+        if frappe.session.user not in (student.user, student.student_email_id):
+            frappe.throw(
+                _("You can only enroll yourself in a program"), frappe.PermissionError
+            )
     else:
         # Check if self enrollment in allowed
         program = frappe.get_doc("Program", program_name)
@@ -183,7 +187,7 @@ def has_super_access():
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_activity(course: str, content_type: str, content: str, program: str):
     if has_super_access():
         return None
@@ -202,7 +206,7 @@ def add_activity(course: str, content_type: str, content: str, program: str):
         return enrollment.add_activity(content_type, content)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def evaluate_quiz(
     quiz_response: str, quiz_name: str, course: str, program: str, time_taken: float
 ):
@@ -261,6 +265,8 @@ def get_quiz(quiz_name: str, course: str):
         }
 
     student = get_current_student()
+    if not student:
+        frappe.throw(_("Only students can attempt quizzes"), frappe.PermissionError)
     course_enrollment = get_enrollment("course", course, student.name)
     status, score, result, time_taken = check_quiz_completion(quiz, course_enrollment)
     return {
@@ -396,13 +402,15 @@ def get_or_create_course_enrollment(course, program):
     student = get_current_student()
     course_enrollment = get_enrollment("course", course, student.name)
     if not course_enrollment:
-        program_enrollment = get_enrollment("program", program.name, student.name)
+        # callers pass the program name (str) straight from whitelisted args
+        program_name = getattr(program, "name", program)
+        program_enrollment = get_enrollment("program", program_name, student.name)
         if not program_enrollment:
-            frappe.throw(_("You are not enrolled in program {0}").format(program))
+            frappe.throw(_("You are not enrolled in program {0}").format(program_name))
             return
         return student.enroll_in_course(
             course_name=course,
-            program_enrollment=get_enrollment("program", program.name, student.name),
+            program_enrollment=program_enrollment,
         )
     else:
         return frappe.get_doc("Course Enrollment", course_enrollment)

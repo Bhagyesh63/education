@@ -137,19 +137,17 @@ def get_program_courses(
         frappe.msgprint(_("Please select a Program first."))
         return []
 
-    # permissions of a child table are evaluated on its parent Program;
-    # get_list raises without read access and applies user permissions
-    if not frappe.get_list(
-        "Program", filters={"name": filters["program"]}, pluck="name", limit=1
-    ):
-        return []
-
     ProgramCourse = frappe.qb.DocType("Program Course")
     match_position = Locate(txt.replace("%", ""), ProgramCourse.course)
 
+    # permissions of a child table are evaluated on its parent Program
     return (
-        frappe.qb.from_(ProgramCourse)
-        .select(ProgramCourse.course, ProgramCourse.course_name)
+        frappe.qb.get_query(
+            "Program Course",
+            fields=["course", "course_name"],
+            ignore_permissions=False,
+            parent_doctype="Program",
+        )
         .where(
             (ProgramCourse.parent == filters["program"])
             & ProgramCourse.course.like(f"%{txt}%")
@@ -168,6 +166,7 @@ def get_program_courses(
 def get_students(
     doctype: str, txt: str, searchfield: str, start: int, page_len: int, filters: dict
 ):
+    frappe.has_permission("Program Enrollment", "create", throw=True)
     if not filters.get("academic_term"):
         filters["academic_term"] = frappe.defaults.get_defaults().academic_term
 

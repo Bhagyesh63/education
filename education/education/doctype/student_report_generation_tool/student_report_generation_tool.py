@@ -78,7 +78,7 @@ def get_attendance_count(student, academic_year, academic_term=None):
                 "docstatus": 1,
                 "date": ["between", (from_date, to_date)],
             },
-            ["status", "count(student) as count"],
+            ["status", {"COUNT": "student", "as": "count"}],
             group_by="status",
         )
 

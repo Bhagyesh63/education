@@ -1895,7 +1895,7 @@ def get_class_prefill(class_program: str | None, academic_term: str | None = Non
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def generate_timetable(student_groups: str | list | None = None):
     """
     Validate config then queue a scoped background generation job.

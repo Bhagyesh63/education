@@ -2,20 +2,32 @@ name: CI
 
 on:
   pull_request:
+    branches: [main, version-16]
     paths-ignore:
       - "**.css"
-      - "**.js"
       - "**.md"
-      - "**.html"
       - "**.csv"
+      - "frontend-react/**"
+      - "frontend/**"
+  push:
+    branches: [main, version-16]
+    paths-ignore:
+      - "**.css"
+      - "**.md"
+      - "**.csv"
+      - "frontend-react/**"
+      - "frontend/**"
+  workflow_dispatch:
   schedule:
-    # Run everday at midnight UTC / 5:30 IST
+    # Run everday at midnight UTC / 5:30 IST (runs on the default branch)
     - cron: "0 0 * * *"
+
 env:
-  EDUCATION_BRANCH: ${{ github.base_ref || github.ref_name }}
+  # Upstream Frappe / ERPNext / Payments branch this fork is built against
+  FRAPPE_BRANCH: version-16
 
 concurrency:
-  group: develop-${{ github.event.number }}
+  group: ci-${{ github.event.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -32,7 +44,7 @@ jobs:
 
     services:
       mysql:
-        image: mariadb:10.6
+        image: mariadb:11.8
         env:
           MARIADB_ROOT_PASSWORD: "root"
         ports:
@@ -88,7 +100,7 @@ jobs:
 
       - name: Get yarn cache directory path
         id: yarn-cache-dir-path
-        run: echo "::set-output name=dir::$(yarn cache dir)"
+        run: echo "dir=$(yarn cache dir)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@v4
         id: yarn-cache
@@ -102,7 +114,8 @@ jobs:
         run: |
           bash ${GITHUB_WORKSPACE}/.github/helper/install.sh
         env:
-          BRANCH_TO_CLONE: ${{ env.EDUCATION_BRANCH }}
+          FRAPPE_BRANCH: ${{ env.FRAPPE_BRANCH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Tests
         run: cd ~/frappe-bench/ && bench --site test_site run-tests --app education

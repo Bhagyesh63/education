@@ -1,6 +1,10 @@
 import { frappeCall } from './client';
 
 export const admissionsApi = {
+  // Public landing page: school identity, contact, classes, open admissions, notices
+  getLandingContext: () =>
+    frappeCall('education.education.api.get_landing_context', {}, { httpMethod: 'GET' }),
+
   getAdmissionsList: () =>
     frappeCall('education.education.api.get_admissions_list'),
 

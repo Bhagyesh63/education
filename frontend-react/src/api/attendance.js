@@ -4,11 +4,16 @@ export const attendanceApi = {
   getAttendanceRoster: (student_group, date, course_schedule) =>
     frappeCall('education.education.api.get_attendance_roster', { student_group, date, course_schedule }),
 
-  getStudentAttendance: (student, student_group) => 
-    frappeCall('education.education.api.get_student_attendance', { student, student_group }),
+  getStudentAttendance: (student, student_group, from_date, to_date) =>
+    frappeCall('education.education.api.get_student_attendance', {
+      ...(student ? { student } : {}),
+      ...(student_group ? { student_group } : {}),
+      ...(from_date ? { from_date } : {}),
+      ...(to_date ? { to_date } : {}),
+    }),
 
-  getSchoolHolidays: (holiday_list) => 
-    frappeCall('education.education.api.get_school_holidays', { holiday_list }),
+  getSchoolHolidays: (holiday_list) =>
+    frappeCall('education.education.api.get_school_holidays', holiday_list ? { holiday_list } : {}),
 
   getStudentLeaves: (student) => 
     frappeCall('education.education.api.get_student_leaves', student ? { student } : {}),
@@ -16,8 +21,11 @@ export const attendanceApi = {
   approveStudentLeave: (leave_id) => 
     frappeCall('education.education.api.approve_student_leave', { leave_id }),
 
-  applyLeave: (leave_data, program_name) => 
-    frappeCall('education.education.api.apply_leave', { leave_data, program_name }),
+  applyLeave: (leave_data, program_name) =>
+    frappeCall('education.education.api.apply_leave', {
+      leave_data: typeof leave_data === 'string' ? leave_data : JSON.stringify(leave_data),
+      ...(program_name ? { program_name } : {}),
+    }),
 
   checkAttendanceRecordsExist: (course_schedule, student_group, date) =>
     frappeCall('education.education.api.check_attendance_records_exist', { course_schedule, student_group, date }),
@@ -45,9 +53,11 @@ export const attendanceApi = {
       ...(academic_year ? { academic_year } : {}),
     }),
 
-  getCourseSchedulesForTool: (program_name = 'all') =>
+  getCourseSchedulesForTool: (program_name = 'all', from_date, to_date) =>
     frappeCall('education.education.api.get_course_schedule_for_student', {
       program_name,
+      ...(from_date ? { from_date } : {}),
+      ...(to_date ? { to_date } : {}),
     }),
 };
 

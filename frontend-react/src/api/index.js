@@ -11,6 +11,7 @@ import { gradesApi } from './grades';
 import { feesApi } from './fees';
 import { achievementsApi } from './achievements';
 import { admissionsApi } from './admissions';
+import { enrollmentApi } from './enrollment';
 
 // Export all transport helpers and utilities
 export * from './client';
@@ -25,6 +26,7 @@ export { gradesApi } from './grades';
 export { feesApi } from './fees';
 export { achievementsApi } from './achievements';
 export { admissionsApi } from './admissions';
+export { enrollmentApi } from './enrollment';
 
 // Unified API object with all domain methods attached
 export const api = {
@@ -43,6 +45,7 @@ export const api = {
   ...feesApi,
   ...achievementsApi,
   ...admissionsApi,
+  ...enrollmentApi,
 };
 
 export default api;

@@ -153,6 +153,7 @@ def get_number_of_leave_days(from_date, to_date, holiday_list):
 
 @frappe.whitelist()
 def get_student_groups(student: str):
+    frappe.has_permission("Student", "read", doc=student, throw=True)
     student_group = frappe.db.get_all(
         "Student Group Student",
         pluck="parent",

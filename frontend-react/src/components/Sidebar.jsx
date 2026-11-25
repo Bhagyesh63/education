@@ -16,10 +16,10 @@ import {
   User,
   BookOpen,
   CalendarPlus,
-  ShieldCheck,
   Award,
   X,
   UserPlus,
+  Layers,
   Calculator,
   FileText,
   FolderKanban
@@ -40,6 +40,7 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
     instructorInfo,
     adminInfo,
     activeWard, 
+    sessionUser,
     logout 
   } = useAuth();
   const navigate = useNavigate();
@@ -67,6 +68,8 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
           { id: 'report-card-tool', path: '/report-card-tool', label: 'Report Card Tool', icon: FileText },
           { id: 'attendance-tool', path: '/attendance-tool', label: 'Attendance Tool', icon: UserCheck },
           { id: 'course-scheduling-tool', path: '/course-scheduling-tool', label: 'Course Scheduling Tool', icon: CalendarPlus },
+          { id: 'program-enrollment-tool', path: '/program-enrollment-tool', label: 'Program Enrollment Tool', icon: UserPlus },
+          { id: 'student-group-tool', path: '/student-group-tool', label: 'Student Group Tool', icon: Layers },
         ]
       },
       { id: 'achievements', path: '/achievements', label: 'Student Achievements', icon: Award },
@@ -100,16 +103,16 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
   let roleTitle = 'Student Portal';
 
   if (isInstructor) {
-    currentPersonName = instructorInfo?.instructor_name || 'Faculty Member';
+    currentPersonName = instructorInfo?.instructor_name || sessionUser || 'Instructor';
     roleTitle = 'Faculty / Instructor';
   } else if (isAdmin) {
-    currentPersonName = adminInfo?.name || 'Education Admin';
+    currentPersonName = adminInfo?.name || sessionUser || 'Administrator';
     roleTitle = 'System Administrator';
   } else if (isGuardian) {
-    currentPersonName = activeWard?.student_name || 'Ward';
+    currentPersonName = activeWard?.student_name || 'No ward selected';
     roleTitle = 'Guardian (Viewing Ward)';
   } else {
-    currentPersonName = studentProfile?.student_name || 'Student';
+    currentPersonName = studentProfile?.student_name || sessionUser || 'Student';
     roleTitle = 'Student Account';
   }
 
@@ -118,6 +121,8 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
                                location.pathname.startsWith('/report-card-tool') || 
                                location.pathname.startsWith('/attendance-tool') ||
                                location.pathname.startsWith('/course-scheduling-tool') ||
+                               location.pathname.startsWith('/program-enrollment-tool') ||
+                               location.pathname.startsWith('/student-group-tool') ||
                                location.pathname.startsWith('/reports-tools');
 
   useEffect(() => {
@@ -144,15 +149,15 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
 
       {/* Main Responsive Aside Sidebar */}
       <aside 
-        className={`fixed inset-y-0 left-0 z-50 lg:sticky lg:top-0 lg:z-30 h-screen bg-white dark:bg-slate-900 border-r border-slate-200/80 dark:border-slate-800 transition-all duration-300 ease-in-out flex flex-col justify-between w-64 print:hidden ${
+        className={`fixed inset-y-0 left-0 z-50 lg:sticky lg:top-0 lg:z-30 h-[100dvh] lg:h-screen bg-white dark:bg-slate-900 border-r border-slate-200/80 dark:border-slate-800 transition-all duration-300 ease-in-out flex flex-col justify-between w-64 max-w-[85vw] lg:max-w-none overflow-hidden print:hidden ${
           mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full lg:translate-x-0'
         } ${collapsed ? 'lg:w-20' : 'lg:w-64'}`}
       >
         {/* Top Header / Branding */}
-        <div>
-          <div className="h-16 flex items-center justify-between px-4 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex-1 min-h-0 flex flex-col">
+          <div className="h-16 shrink-0 flex items-center justify-between gap-2 px-4 border-b border-slate-100 dark:border-slate-800">
             <div 
-              className="flex items-center gap-3 overflow-hidden cursor-pointer" 
+              className="flex items-center gap-3 overflow-hidden cursor-pointer min-w-0" 
               onClick={() => handleNavClick('/dashboard')}
             >
               <div className="w-10 h-10 rounded-xl gradient-brand flex items-center justify-center text-white shadow-glow shrink-0">
@@ -164,8 +169,11 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
               </div>
               {(!collapsed || mobileOpen) && (
                 <div className="flex flex-col min-w-0">
-                  <span className="font-bold text-slate-900 dark:text-slate-100 text-sm tracking-tight truncate">
-                    {schoolSettings?.name || 'Frappe Academy'}
+                  <span
+                    className="font-bold text-slate-900 dark:text-slate-100 text-sm tracking-tight leading-tight line-clamp-2 break-words"
+                    title={schoolSettings?.name || 'EduPortal'}
+                  >
+                    {schoolSettings?.name || 'EduPortal'}
                   </span>
                   <span className="text-xs text-brand-600 dark:text-brand-400 font-medium flex items-center gap-1">
                     <Sparkles className="w-3 h-3" />
@@ -178,7 +186,7 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
             {/* Desktop Collapse Button */}
             <button
               onClick={() => setCollapsed(!collapsed)}
-              className="hidden lg:flex w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
+              className="hidden lg:flex w-7 h-7 shrink-0 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
               title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             >
               {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -187,22 +195,22 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
             {/* Mobile Close Button */}
             <button
               onClick={onCloseMobile}
-              className="lg:hidden w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
+              className="lg:hidden w-9 h-9 shrink-0 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
               title="Close Menu"
             >
-              <X className="w-4 h-4" />
+              <X className="w-5 h-5" />
             </button>
           </div>
 
           {/* Current Active Person Badge */}
           {(!collapsed || mobileOpen) && (
-            <div className="mx-3 my-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-center gap-2.5">
+            <div className="shrink-0 mx-3 my-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-full bg-brand-100 dark:bg-brand-950/80 text-brand-700 dark:text-brand-300 font-semibold text-xs flex items-center justify-center shrink-0">
                 {currentPersonName.charAt(0)}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">{currentPersonName}</p>
-                <p className="text-[10px] text-brand-600 dark:text-brand-400 uppercase tracking-wider font-semibold truncate">
+                <p className="text-[11px] text-brand-600 dark:text-brand-400 uppercase tracking-wider font-semibold truncate">
                   {roleTitle}
                 </p>
               </div>
@@ -210,7 +218,7 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
           )}
 
           {/* Navigation Links */}
-          <nav className="p-3 space-y-1 overflow-y-auto max-h-[calc(100vh-210px)]">
+          <nav className="flex-1 min-h-0 p-3 space-y-1 overflow-y-auto overscroll-contain">
             {navItems.map((item) => {
               const Icon = item.icon;
 
@@ -251,7 +259,7 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
 
                       {(!collapsed || mobileOpen) && (
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                          <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
                             {item.children.length}
                           </span>
                           <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
@@ -261,7 +269,7 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
 
                     {/* Sub-Items Collapsible Container */}
                     {isOpen && (!collapsed || mobileOpen) && (
-                      <div className="ml-4 pl-3 border-l-2 border-slate-200/80 dark:border-slate-800 space-y-1 py-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                      <div className="ml-4 pl-3 min-w-0 border-l-2 border-slate-200/80 dark:border-slate-800 space-y-1 py-1 animate-in fade-in slide-in-from-top-1 duration-150">
                         {item.children.map((sub) => {
                           const SubIcon = sub.icon;
                           const isSubActive = location.pathname === sub.path;
@@ -271,7 +279,7 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
                               key={sub.id}
                               type="button"
                               onClick={() => handleNavClick(sub.path)}
-                              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all duration-150 relative ${
+                              className={`w-full flex items-center gap-2.5 px-3 py-2.5 lg:py-2 rounded-lg text-xs font-semibold transition-all duration-150 relative ${
                                 isSubActive
                                   ? 'bg-brand-600 text-white shadow-xs font-bold'
                                   : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-200'
@@ -315,13 +323,13 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
         </div>
 
         {/* Footer / User Actions */}
-        <div className="p-3 border-t border-slate-100 dark:border-slate-800 space-y-1">
+        <div className="shrink-0 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-slate-100 dark:border-slate-800 space-y-1">
           <button
             onClick={() => {
               onOpenProfile();
               if (onCloseMobile) onCloseMobile();
             }}
-            className="w-full flex items-center gap-3 px-3.5 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-slate-100 transition"
+            className="w-full flex items-center gap-3 px-3.5 py-2.5 lg:py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-slate-100 transition"
             title="View Profile Details"
           >
             <User className="w-4 h-4 text-slate-400 shrink-0" />
@@ -330,7 +338,7 @@ export default function Sidebar({ onOpenProfile, mobileOpen, onCloseMobile }) {
 
           <button
             onClick={logout}
-            className="w-full flex items-center gap-3 px-3.5 py-2 rounded-xl text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
+            className="w-full flex items-center gap-3 px-3.5 py-2.5 lg:py-2 rounded-xl text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
             title="Sign out"
           >
             <LogOut className="w-4 h-4 text-rose-500 shrink-0" />

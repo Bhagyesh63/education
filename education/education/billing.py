@@ -1,21 +1,31 @@
 import frappe
 from frappe import _
 from frappe.utils import validate_phone_number, cint, nowdate
-import razorpay
 from erpnext.accounts.doctype.journal_entry.journal_entry import (
     get_payment_entry_against_invoice,
 )
-from erpnext.accounts.doctype.payment_entry.test_payment_entry import get_payment_entry
+from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
 
 
 def get_details(docname):
     details = frappe.db.get_value(
         "Sales Invoice", docname, ["name", "currency", "outstanding_amount"], as_dict=1
     )
+    if not details:
+        frappe.throw(_("Invalid document provided."), frappe.DoesNotExistError)
     return details
 
 
 def get_client():
+    try:
+        import razorpay
+    except ImportError:
+        frappe.throw(
+            _(
+                "Online payments are not available: the payment gateway is not installed."
+            ),
+            title=_("Payment Gateway Unavailable"),
+        )
     settings = frappe.get_single("Education Settings")
     razorpay_key = settings.razorpay_key
     razorpay_secret = settings.get_password("razorpay_secret", raise_exception=True)
@@ -44,12 +54,13 @@ def create_order(client, amount, currency):
         )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_payment_options(
     doctype: str, docname: str, phone: str, currency: str | None = None
 ):
-    if not frappe.db.exists(doctype, docname):
+    if doctype != "Sales Invoice" or not frappe.db.exists(doctype, docname):
         frappe.throw(_("Invalid document provided."))
+    frappe.has_permission(doctype, "read", doc=docname, throw=True)
     validate_phone_number(phone_number=phone, throw=True)
     details = get_details(docname)
     client = get_client()
@@ -97,8 +108,10 @@ def create_razorpay_payment_record(args, status):
     return payment_record
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def handle_payment_success(response: dict, against_invoice: str, billing_details: dict):
+    if not response.get("razorpay_order_id") or not response.get("razorpay_payment_id"):
+        frappe.throw(_("Invalid payment response."))
     if frappe.db.exists(
         "Payment Record",
         {
@@ -130,9 +143,12 @@ def handle_payment_success(response: dict, against_invoice: str, billing_details
         frappe.throw(_("Error during payment: {0}").format(str(e)))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def handle_payment_failure(response: dict, against_invoice: str, billing_details: dict):
-
+    if not isinstance(response.get("error"), dict) or not isinstance(
+        response["error"].get("metadata"), dict
+    ):
+        frappe.throw(_("Invalid payment response."))
     response = response["error"]
     razorpay_date = {
         "description": response.get("description"),

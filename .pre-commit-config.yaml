@@ -33,6 +33,8 @@ repos:
     hooks:
       - id: prettier
         types_or: [javascript, vue, scss]
+        # the React portal has its own code style (semicolons); don't reformat it
+        exclude: '^frontend-react/'
 
 ci:
   autoupdate_schedule: weekly

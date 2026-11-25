@@ -52,6 +52,9 @@ export default function StudentsView({ onSelectStudent }) {
   const [directory, setDirectory] = useState([]);
   const [metadata, setMetadata] = useState({ programs: [], academic_years: [], academic_terms: [], student_groups: [] });
   const [loading, setLoading] = useState(isStaff || isStudent);
+  const [loadError, setLoadError] = useState(null);
+  const [detailError, setDetailError] = useState(null);
+  const [dossierFetched, setDossierFetched] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [programFilter, setProgramFilter] = useState('all');
   const [groupFilter, setGroupFilter] = useState('all');
@@ -145,18 +148,21 @@ export default function StudentsView({ onSelectStudent }) {
   const loadDirectoryData = () => {
     if (!isStaff) return;
     setLoading(true);
+    setLoadError(null);
     Promise.all([
       api.getStudentDirectory(),
       api.getEnrollmentMetadata ? api.getEnrollmentMetadata().catch(() => null) : Promise.resolve(null),
     ])
       .then(([dirData, metaData]) => {
-        setDirectory(dirData || []);
+        setDirectory(Array.isArray(dirData) ? dirData : []);
         if (metaData) {
           setMetadata(metaData);
         }
       })
       .catch((err) => {
         console.error('Failed to load student directory data:', err);
+        setDirectory([]);
+        setLoadError(err.message || 'Failed to load the student directory.');
       })
       .finally(() => {
         setLoading(false);
@@ -173,16 +179,21 @@ export default function StudentsView({ onSelectStudent }) {
   useEffect(() => {
     if (!isStudent) return;
     setLoading(true);
-    const targetStudent = activeStudentId || studentProfile?.name || 'EDU-STU-2026-00001';
+    setLoadError(null);
+    // Backend resolves the logged-in student's own record when no ID is passed
+    const targetStudent = activeStudentId || studentProfile?.name || null;
     api.getStudentProfile(targetStudent)
       .then((data) => {
-        setMyDossier(data);
+        setMyDossier(data || null);
       })
       .catch((err) => {
         console.error('Failed to load student dossier:', err);
+        setMyDossier(null);
+        setLoadError(err.message || 'Failed to load your student record.');
       })
       .finally(() => {
         setLoading(false);
+        setDossierFetched(true);
       });
   }, [isStudent, activeStudentId, studentProfile]);
 
@@ -191,11 +202,15 @@ export default function StudentsView({ onSelectStudent }) {
     setLoadingDetail(true);
     setDetailModalOpen(true);
     setModalTab('overview');
+    setDetailError(null);
+    setSelectedStudentDetail(null);
     try {
       const data = await api.getStudentProfile(studentId);
-      setSelectedStudentDetail(data);
+      setSelectedStudentDetail(data || null);
+      if (!data) setDetailError('No student record was found.');
     } catch (err) {
       console.error('Failed to fetch student profile:', err);
+      setDetailError(err.message || 'Failed to load the student record.');
     } finally {
       setLoadingDetail(false);
     }
@@ -208,15 +223,16 @@ export default function StudentsView({ onSelectStudent }) {
     const initialSourceFilter = programFilter && programFilter !== 'all' ? programFilter : 'all';
     setBulkSourceFilter(initialSourceFilter);
 
-    // Smart default for destination program: if on Standard 6, suggest Standard 7; if Standard 5, suggest Standard 6
-    let defaultProg = metadata.programs?.[0]?.name || 'Standard 5';
-    if (initialSourceFilter === 'Standard 6' && metadata.programs?.some((p) => p.name === 'Standard 7')) {
-      defaultProg = 'Standard 7';
-    } else if (initialSourceFilter === 'Standard 5' && metadata.programs?.some((p) => p.name === 'Standard 6')) {
-      defaultProg = 'Standard 6';
+    // Smart default for destination program: when filtering by a program, suggest the next
+    // program in the catalogue (e.g. promotion to the next class); otherwise the first program.
+    const programNames = (metadata.programs || []).map((p) => p.name);
+    let defaultProg = programNames[0] || '';
+    if (initialSourceFilter !== 'all') {
+      const idx = programNames.indexOf(initialSourceFilter);
+      if (idx >= 0 && idx + 1 < programNames.length) defaultProg = programNames[idx + 1];
     }
 
-    const defaultYear = metadata.academic_years?.[0]?.name || '2028-2029';
+    const defaultYear = metadata.academic_years?.[0]?.name || '';
     const defaultSection = metadata.student_groups?.find((sg) => sg.program === defaultProg)?.name || '';
 
     setEnrollMode(initialMode);
@@ -343,7 +359,7 @@ export default function StudentsView({ onSelectStudent }) {
     const matchingGroup = metadata.student_groups?.find(sg => 
       studentObj.programs && studentObj.programs.includes(sg.program)
     );
-    const defaultGroup = matchingGroup?.name || metadata.student_groups?.[0]?.name || 'Standard 5 - Section A';
+    const defaultGroup = matchingGroup?.name || metadata.student_groups?.[0]?.name || '';
     setAssignData({
       student: studentObj.name,
       student_name: studentObj.student_name,
@@ -452,9 +468,10 @@ export default function StudentsView({ onSelectStudent }) {
 
   // Open Create Academic Year Modal
   const handleOpenCreateYearModal = () => {
-    let defaultStart = '2029-04-01';
-    let defaultEnd = '2030-03-31';
-    let defaultName = '2029-2030';
+    const thisYear = new Date().getFullYear();
+    let defaultStart = `${thisYear}-04-01`;
+    let defaultEnd = `${thisYear + 1}-03-31`;
+    let defaultName = `${thisYear}-${thisYear + 1}`;
 
     if (metadata.academic_years && metadata.academic_years.length > 0) {
       const topYear = metadata.academic_years[0];
@@ -549,10 +566,10 @@ export default function StudentsView({ onSelectStudent }) {
   };
 
   const handleOpenCreateTermModal = (preselectedYear = null) => {
-    const activeYear = preselectedYear || enrollData.academic_year || metadata.academic_years?.[0]?.name || '2026-2027';
+    const activeYear = preselectedYear || enrollData.academic_year || metadata.academic_years?.[0]?.name || '';
     const yearObj = metadata.academic_years?.find((y) => y.name === activeYear);
-    let defaultStart = yearObj?.year_start_date || '2026-04-01';
-    let defaultEnd = '2026-09-30';
+    let defaultStart = yearObj?.year_start_date || '';
+    let defaultEnd = '';
     if (yearObj?.year_start_date) {
       const startD = new Date(yearObj.year_start_date);
       const midD = new Date(startD);
@@ -686,10 +703,10 @@ export default function StudentsView({ onSelectStudent }) {
   };
 
   const handleOpenCreateGroupModal = (preselectedProgram = null, preselectedYear = null) => {
-    const defaultProg = preselectedProgram || enrollData.program || metadata.programs?.[0]?.name || 'Standard 5';
-    const defaultYear = preselectedYear || enrollData.academic_year || metadata.academic_years?.[0]?.name || '2026-2027';
+    const defaultProg = preselectedProgram || enrollData.program || metadata.programs?.[0]?.name || '';
+    const defaultYear = preselectedYear || enrollData.academic_year || metadata.academic_years?.[0]?.name || '';
     setNewGroupData({
-      student_group_name: `${defaultProg} - Section B`,
+      student_group_name: defaultProg ? `${defaultProg} - Section B` : '',
       program: defaultProg,
       academic_year: defaultYear,
       academic_term: enrollData.academic_term || '',
@@ -713,11 +730,11 @@ export default function StudentsView({ onSelectStudent }) {
   };
 
   const handleSectionLetterClick = (letter) => {
-    const prog = newGroupData.program || 'Standard 5';
+    const prog = newGroupData.program;
     setNewGroupData((prev) => ({
       ...prev,
       section_letter: letter,
-      student_group_name: `${prog} - Section ${letter}`,
+      student_group_name: prog ? `${prog} - Section ${letter}` : prev.student_group_name,
     }));
   };
 
@@ -785,8 +802,34 @@ export default function StudentsView({ onSelectStudent }) {
     const guardiansList = myDossier?.guardians || [];
     const studentGroupsList = myDossier?.student_groups || [];
     const coursesList = myDossier?.enrolled_courses || [];
-    const attendanceStats = myDossier?.attendance_summary || { total: 0, present: 0, absent: 0, percentage: 100 };
+    const attendanceStats = myDossier?.attendance_summary || { total: 0, present: 0, absent: 0, percentage: null };
+    const hasAttendance = attendanceStats.total > 0 && attendanceStats.percentage != null;
     const logsList = myDossier?.recent_logs || [];
+
+    if (loading || (!myDossier && !loadError && !dossierFetched)) {
+      return (
+        <div className="p-16 text-center text-slate-400 text-xs">
+          <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+          Loading your student record...
+        </div>
+      );
+    }
+
+    if (loadError || !myDossier) {
+      return (
+        <div className="glass-panel rounded-3xl p-12 text-center border border-slate-200/80 dark:border-slate-800">
+          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3 ${loadError ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-500' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'}`}>
+            {loadError ? <AlertCircle className="w-6 h-6" /> : <User className="w-6 h-6" />}
+          </div>
+          <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200">
+            {loadError ? 'Unable to Load Student Record' : 'No Student Record Linked'}
+          </h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm mx-auto">
+            {loadError || 'Your account is not linked to a student record yet. Please contact the school administration.'}
+          </p>
+        </div>
+      );
+    }
 
     const initials = (student.student_name || 'Student')
       .split(' ')
@@ -799,10 +842,10 @@ export default function StudentsView({ onSelectStudent }) {
     return (
       <div className="space-y-6">
         {/* Hero Identity Banner */}
-        <div className="glass-panel p-6 sm:p-8 rounded-3xl border border-slate-200/80 dark:border-slate-800 relative overflow-hidden bg-gradient-to-br from-white/80 via-white/50 to-brand-50/30 dark:from-slate-900/90 dark:via-slate-900/60 dark:to-brand-950/20 shadow-xs">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
-            <div className="flex items-center gap-5">
-              <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-brand-600 via-indigo-600 to-purple-600 text-white flex items-center justify-center font-black text-2xl shadow-xl shadow-brand-500/20 shrink-0 border-2 border-white/40 dark:border-slate-700">
+        <div className="glass-panel p-5 sm:p-8 rounded-3xl border border-slate-200/80 dark:border-slate-800 relative overflow-hidden bg-gradient-to-br from-white/80 via-white/50 to-brand-50/30 dark:from-slate-900/90 dark:via-slate-900/60 dark:to-brand-950/20 shadow-xs">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-6">
+            <div className="flex items-center gap-4 sm:gap-5 min-w-0">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl bg-gradient-to-tr from-brand-600 via-indigo-600 to-purple-600 text-white flex items-center justify-center font-black text-2xl shadow-xl shadow-brand-500/20 shrink-0 border-2 border-white/40 dark:border-slate-700">
                 {student.image ? (
                   <img src={student.image} alt={student.student_name} className="w-full h-full object-cover rounded-3xl" />
                 ) : (
@@ -810,9 +853,9 @@ export default function StudentsView({ onSelectStudent }) {
                 )}
               </div>
 
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2.5 flex-wrap">
-                  <h2 className="text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
+                  <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight break-words min-w-0">
                     {student.student_name || 'Student Name'}
                   </h2>
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
@@ -822,8 +865,8 @@ export default function StudentsView({ onSelectStudent }) {
                 </div>
 
                 <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500 dark:text-slate-400 font-medium flex-wrap">
-                  <span className="font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md text-slate-700 dark:text-slate-300">
-                    ID: {student.name || 'EDU-STU-2026-00001'}
+                  <span className="font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md text-slate-700 dark:text-slate-300 break-all">
+                    ID: {student.name || '—'}
                   </span>
                   {studentGroupsList.length > 0 && (
                     <span className="flex items-center gap-1 font-semibold text-brand-600 dark:text-brand-400">
@@ -845,8 +888,8 @@ export default function StudentsView({ onSelectStudent }) {
             <div className="flex items-center gap-3">
               <div className="px-4 py-2 rounded-2xl bg-white/80 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700 text-center shadow-xs">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Attendance Health</span>
-                <span className={`text-lg font-black ${attendanceStats.percentage >= 75 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                  {attendanceStats.percentage}%
+                <span className={`text-lg font-black ${!hasAttendance ? 'text-slate-400' : attendanceStats.percentage >= 75 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                  {hasAttendance ? `${attendanceStats.percentage}%` : '—'}
                 </span>
               </div>
             </div>
@@ -854,43 +897,45 @@ export default function StudentsView({ onSelectStudent }) {
         </div>
 
         {/* Metric Cards Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-1">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+          <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-1 min-w-0 break-words">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Class & Syllabus</span>
-            <span className="text-sm font-black text-slate-800 dark:text-slate-200 truncate block">
-              {myDossier?.suggested_program || 'Standard 5'}
+            <span className="text-sm font-black text-slate-800 dark:text-slate-200 truncate block" title={myDossier?.suggested_program || ''}>
+              {myDossier?.suggested_program || 'Not enrolled'}
             </span>
-            <span className="text-[10px] text-slate-500 font-mono">
-              Academic Year: {myDossier?.suggested_academic_year || '2026-2027'}
+            <span className="text-[11px] text-slate-500 font-mono block">
+              Academic Year: {myDossier?.suggested_academic_year || '—'}
             </span>
           </div>
 
-          <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-1">
+          <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-1 min-w-0 break-words">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Enrolled Subjects</span>
             <span className="text-sm font-black text-brand-600 dark:text-brand-400 block">
-              {coursesList.length || 3} Courses
+              {coursesList.length} {coursesList.length === 1 ? 'Course' : 'Courses'}
             </span>
-            <span className="text-[10px] text-slate-500 truncate block">
-              Core curriculum enrolled
+            <span className="text-[11px] text-slate-500 truncate block">
+              {coursesList.length > 0 ? 'Core curriculum enrolled' : 'No course enrollments yet'}
             </span>
           </div>
 
-          <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-1">
+          <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-1 min-w-0 break-words">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Emergency Guardian</span>
-            <span className="text-sm font-black text-slate-800 dark:text-slate-200 truncate block">
-              {guardiansList[0]?.guardian_name || 'Guardian'}
+            <span className="text-sm font-black text-slate-800 dark:text-slate-200 truncate block" title={guardiansList[0]?.guardian_name || ''}>
+              {guardiansList[0]?.guardian_name || 'Not linked'}
             </span>
-            <span className="text-[10px] text-slate-500">
-              {guardiansList[0]?.relation || 'Father'}: {guardiansList[0]?.mobile_number || 'Registered'}
+            <span className="text-[11px] text-slate-500 block break-all">
+              {guardiansList[0]
+                ? `${guardiansList[0].relation || 'Guardian'}: ${guardiansList[0].mobile_number || guardiansList[0].email_address || 'No contact registered'}`
+                : 'No guardian on record'}
             </span>
           </div>
 
-          <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-1">
+          <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-1 min-w-0 break-words">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Attendance Sessions</span>
             <span className="text-sm font-black text-slate-800 dark:text-slate-200 block">
               {attendanceStats.present} / {attendanceStats.total} Days
             </span>
-            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold block">
               {attendanceStats.absent} absences recorded
             </span>
           </div>
@@ -912,7 +957,7 @@ export default function StudentsView({ onSelectStudent }) {
               <button
                 key={tab.id}
                 onClick={() => setMyDossierTab(tab.id)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap shrink-0 ${
                   active
                     ? 'bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-300 shadow-xs'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -926,7 +971,7 @@ export default function StudentsView({ onSelectStudent }) {
         </div>
 
         {/* Tab Content Panels */}
-        <div className="glass-panel p-6 rounded-3xl border border-slate-200/80 dark:border-slate-800">
+        <div className="glass-panel p-4 sm:p-6 rounded-3xl border border-slate-200/80 dark:border-slate-800">
           {myDossierTab === 'overview' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-4">
@@ -934,7 +979,7 @@ export default function StudentsView({ onSelectStudent }) {
                   <User className="w-3.5 h-3.5 text-brand-500" />
                   Personal Information
                 </h4>
-                <div className="grid grid-cols-2 gap-4 text-xs">
+                <div className="grid grid-cols-2 gap-3 sm:gap-4 text-xs break-words">
                   <div>
                     <span className="text-slate-400 block text-[11px]">Full Name</span>
                     <span className="font-semibold text-slate-800 dark:text-slate-200">{student.student_name || '—'}</span>
@@ -953,12 +998,12 @@ export default function StudentsView({ onSelectStudent }) {
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[11px]">Nationality</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{student.nationality || 'Indian'}</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{student.nationality || '—'}</span>
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[11px]">Enrolled Cohort</span>
                     <span className="font-semibold text-brand-600 dark:text-brand-400">
-                      {studentGroupsList[0]?.student_group || 'Standard 5 - Section A'}
+                      {studentGroupsList[0]?.student_group || 'Unassigned'}
                     </span>
                   </div>
                 </div>
@@ -970,9 +1015,9 @@ export default function StudentsView({ onSelectStudent }) {
                   Contact & Residential Address
                 </h4>
                 <div className="space-y-3 text-xs">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
                     <Mail className="w-4 h-4 text-slate-400 shrink-0" />
-                    <span className="font-mono text-slate-700 dark:text-slate-300">{student.student_email_id || 'student@example.com'}</span>
+                    <span className="font-mono text-slate-700 dark:text-slate-300 min-w-0 break-all">{student.student_email_id || 'No email registered'}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Phone className="w-4 h-4 text-slate-400 shrink-0" />
@@ -980,12 +1025,12 @@ export default function StudentsView({ onSelectStudent }) {
                   </div>
                   <div className="flex items-start gap-2">
                     <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                    <span className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                    <span className="text-slate-600 dark:text-slate-400 leading-relaxed min-w-0 break-words">
                       {student.address_line_1 ? `${student.address_line_1}, ` : ''}
                       {student.city ? `${student.city}, ` : ''}
                       {student.state ? `${student.state} - ` : ''}
                       {student.pincode || ''}
-                      {!student.address_line_1 && !student.city && 'Registered Campus Residence'}
+                      {!student.address_line_1 && !student.city && !student.state && !student.pincode && 'No address on record'}
                     </span>
                   </div>
                 </div>
@@ -999,16 +1044,19 @@ export default function StudentsView({ onSelectStudent }) {
                 <BookOpen className="w-3.5 h-3.5 text-brand-500" />
                 Active Registered Courses
               </h4>
+              {coursesList.length === 0 && (
+                <p className="text-xs text-slate-400 py-4">No course enrollments recorded yet.</p>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {coursesList.map((c, i) => (
                   <div key={i} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100">{c.course_name || c.course}</span>
-                      <span className="px-2 py-0.5 rounded-md bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-400 text-[10px] font-bold">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 min-w-0 break-words">{c.course_name || c.course}</span>
+                      <span className="px-2 py-0.5 rounded-md bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-400 text-[11px] font-bold shrink-0 max-w-[50%] truncate" title={c.program}>
                         {c.program}
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-400">Academic Year: {c.academic_year || '2026-2027'}</p>
+                    <p className="text-[11px] text-slate-400">Academic Year: {c.academic_year || '—'}</p>
                   </div>
                 ))}
               </div>
@@ -1021,15 +1069,18 @@ export default function StudentsView({ onSelectStudent }) {
                 <GraduationCap className="w-3.5 h-3.5 text-brand-500" />
                 Program Enrollment History
               </h4>
+              {programsList.length === 0 && (
+                <p className="text-xs text-slate-400 py-4">No program enrollments recorded yet.</p>
+              )}
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
                 {programsList.map((pe, idx) => (
-                  <div key={idx} className="py-3 flex items-center justify-between gap-4">
-                    <div>
-                      <h5 className="font-bold text-xs text-slate-800 dark:text-slate-200">{pe.program}</h5>
-                      <span className="text-[11px] font-mono text-slate-400">Enrollment ID: {pe.program_enrollment}</span>
+                  <div key={idx} className="py-3 flex flex-wrap items-center justify-between gap-2 sm:gap-4">
+                    <div className="min-w-0">
+                      <h5 className="font-bold text-xs text-slate-800 dark:text-slate-200 break-words">{pe.program}</h5>
+                      <span className="text-[11px] font-mono text-slate-400 break-all">Enrollment ID: {pe.program_enrollment}</span>
                     </div>
-                    <div className="text-right">
-                      <span className="px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-bold">
+                    <div className="sm:text-right">
+                      <span className="px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-bold">
                         {pe.academic_year} {pe.academic_term ? `• ${pe.academic_term}` : ''}
                       </span>
                     </div>
@@ -1045,22 +1096,25 @@ export default function StudentsView({ onSelectStudent }) {
                 <Shield className="w-3.5 h-3.5 text-brand-500" />
                 Authorized Guardians & Emergency Contacts
               </h4>
+              {guardiansList.length === 0 && (
+                <p className="text-xs text-slate-400 py-4">No guardians linked to this student record.</p>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {guardiansList.map((g, idx) => (
                   <div key={idx} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <h5 className="font-bold text-sm text-slate-800 dark:text-slate-200">{g.guardian_name}</h5>
-                      <span className="px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold">
+                    <div className="flex items-start justify-between gap-2">
+                      <h5 className="font-bold text-sm text-slate-800 dark:text-slate-200 min-w-0 break-words">{g.guardian_name}</h5>
+                      <span className="px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold shrink-0">
                         {g.relation || 'Parent'}
                       </span>
                     </div>
                     <div className="text-xs text-slate-500 space-y-1">
-                      <p className="flex items-center gap-2">
-                        <Mail className="w-3.5 h-3.5 text-slate-400" />
-                        <span>{g.email_address || 'No email registered'}</span>
+                      <p className="flex items-center gap-2 min-w-0">
+                        <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="min-w-0 break-all">{g.email_address || 'No email registered'}</span>
                       </p>
                       <p className="flex items-center gap-2">
-                        <Phone className="w-3.5 h-3.5 text-slate-400" />
+                        <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span>{g.mobile_number || 'No phone registered'}</span>
                       </p>
                     </div>
@@ -1076,16 +1130,16 @@ export default function StudentsView({ onSelectStudent }) {
                 <Activity className="w-3.5 h-3.5 text-brand-500" />
                 Attendance Summary & Compliance
               </h4>
-              <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 space-y-3">
-                <div className="flex items-center justify-between text-xs">
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 space-y-3">
+                <div className="flex items-center justify-between gap-3 text-xs">
                   <span className="font-semibold text-slate-600 dark:text-slate-400">Total Timetable Sessions Conducted:</span>
-                  <span className="font-bold text-slate-900 dark:text-slate-100">{attendanceStats.total} Sessions</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100 shrink-0">{attendanceStats.total} Sessions</span>
                 </div>
-                <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center justify-between gap-3 text-xs">
                   <span className="font-semibold text-emerald-600 dark:text-emerald-400">Present Sessions Attended:</span>
                   <span className="font-bold text-emerald-600 dark:text-emerald-400">{attendanceStats.present}</span>
                 </div>
-                <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center justify-between gap-3 text-xs">
                   <span className="font-semibold text-rose-600 dark:text-rose-400">Unexcused Absences:</span>
                   <span className="font-bold text-rose-600 dark:text-rose-400">{attendanceStats.absent}</span>
                 </div>
@@ -1093,9 +1147,12 @@ export default function StudentsView({ onSelectStudent }) {
                 <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden mt-2">
                   <div
                     className="bg-brand-600 h-full rounded-full transition-all duration-500"
-                    style={{ width: `${Math.min(100, attendanceStats.percentage)}%` }}
+                    style={{ width: `${hasAttendance ? Math.min(100, attendanceStats.percentage) : 0}%` }}
                   />
                 </div>
+                {!hasAttendance && (
+                  <p className="text-[11px] text-slate-400">No attendance has been recorded yet.</p>
+                )}
               </div>
             </div>
           )}
@@ -1112,14 +1169,14 @@ export default function StudentsView({ onSelectStudent }) {
                 <div className="space-y-3">
                   {logsList.map((log, idx) => (
                     <div key={idx} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 space-y-1">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-400 text-[10px] font-bold uppercase">
                           {log.type}
                         </span>
                         <span className="text-[11px] text-slate-400 font-mono">{log.date}</span>
                       </div>
                       <div 
-                        className="text-xs text-slate-700 dark:text-slate-300 pt-1 prose dark:prose-invert max-w-none text-xs"
+                        className="text-xs text-slate-700 dark:text-slate-300 pt-1 prose dark:prose-invert max-w-none text-xs break-words"
                         dangerouslySetInnerHTML={{ __html: log.log }}
                       />
                     </div>
@@ -1140,7 +1197,7 @@ export default function StudentsView({ onSelectStudent }) {
     return (
       <div className="space-y-6">
         <div>
-          <h2 className="text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
+          <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
             Linked Students & Wards
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -1166,7 +1223,7 @@ export default function StudentsView({ onSelectStudent }) {
               return (
                 <div
                   key={ward.student}
-                  className={`glass-panel p-6 rounded-3xl border transition-all duration-200 relative group overflow-hidden ${
+                  className={`glass-panel p-5 sm:p-6 rounded-3xl border transition-all duration-200 relative group overflow-hidden ${
                     isSelected
                       ? 'border-brand-500/80 bg-brand-50/20 dark:bg-brand-950/30 shadow-glow'
                       : 'border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-md'
@@ -1255,13 +1312,10 @@ export default function StudentsView({ onSelectStudent }) {
   return (
     <div className="space-y-6">
       {/* Top Banner & Quick Stats */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1 basis-[260px]">
+          <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight flex flex-wrap items-center gap-x-2 gap-y-1">
             Institutional Student Directory
-            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-              v15.2
-            </span>
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Active enrolled students, cohort section rosters, and academic records
@@ -1276,7 +1330,7 @@ export default function StudentsView({ onSelectStudent }) {
           {/* Action: Bulk Cohort Enrollment */}
           <button
             onClick={() => handleOpenEnrollModal(null, 'bulk')}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-brand-500/20 transition active:scale-95"
+            className="flex items-center gap-1.5 px-3.5 py-2 sm:py-1.5 rounded-xl whitespace-nowrap bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-brand-500/20 transition active:scale-95"
             title="Batch enroll multiple students into a program and section"
           >
             <Users className="w-3.5 h-3.5" />
@@ -1286,7 +1340,7 @@ export default function StudentsView({ onSelectStudent }) {
           {/* Action: Enroll Single Student in Program */}
           <button
             onClick={() => handleOpenEnrollModal(null, 'single')}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/60 text-slate-700 dark:text-slate-300 text-xs font-bold shadow-xs transition cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 sm:py-1.5 rounded-xl whitespace-nowrap border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/60 text-slate-700 dark:text-slate-300 text-xs font-bold shadow-xs transition cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5 text-brand-500" />
             <span>Enroll Single</span>
@@ -1295,7 +1349,7 @@ export default function StudentsView({ onSelectStudent }) {
           {/* Action: Create Student Group / Section */}
           <button
             onClick={() => handleOpenCreateGroupModal()}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 text-xs font-bold shadow-xs transition cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 sm:py-1.5 rounded-xl whitespace-nowrap border border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 text-xs font-bold shadow-xs transition cursor-pointer"
             title="Create a new section or cohort group (e.g. Standard 5 - Section B)"
           >
             <Layers className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
@@ -1305,7 +1359,7 @@ export default function StudentsView({ onSelectStudent }) {
           {/* Action: Create Academic Year */}
           <button
             onClick={handleOpenCreateYearModal}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-xs font-bold shadow-xs transition"
+            className="flex items-center gap-1.5 px-3.5 py-2 sm:py-1.5 rounded-xl whitespace-nowrap border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-xs font-bold shadow-xs transition"
             title="Define and create a new academic year period"
           >
             <Calendar className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
@@ -1315,7 +1369,7 @@ export default function StudentsView({ onSelectStudent }) {
           {/* Action: Create Academic Term */}
           <button
             onClick={() => handleOpenCreateTermModal()}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-700 dark:text-sky-300 text-xs font-bold shadow-xs transition"
+            className="flex items-center gap-1.5 px-3.5 py-2 sm:py-1.5 rounded-xl whitespace-nowrap border border-sky-200 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-700 dark:text-sky-300 text-xs font-bold shadow-xs transition"
             title="Define and create a new academic term period"
           >
             <Clock className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
@@ -1325,7 +1379,7 @@ export default function StudentsView({ onSelectStudent }) {
       </div>
 
       {/* Search & Filter Toolbar */}
-      <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-3 shadow-xs">
+      <div className="glass-panel p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow-xs">
         {/* Search Input */}
         <div className="relative w-full md:w-80">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -1339,16 +1393,17 @@ export default function StudentsView({ onSelectStudent }) {
         </div>
 
         {/* Filters & Mode Switcher */}
-        <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto flex-wrap">
+        <div className="flex items-center gap-2 w-full md:w-auto min-w-0 overflow-x-auto flex-wrap">
           {/* Program Pills */}
-          <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl">
-            {['all', ...(metadata.programs && metadata.programs.length > 0 
-                ? Array.from(new Set(metadata.programs.map(p => p.name || p.program_name).filter(Boolean)))
-                : ['Standard 5', 'Standard 6', 'Standard 7'])].map((prog) => (
+          <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl max-w-full overflow-x-auto">
+            {['all', ...Array.from(new Set([
+                ...(metadata.programs || []).map(p => p.name || p.program_name),
+                ...directory.flatMap(s => s.programs || []),
+              ].filter(Boolean)))].map((prog) => (
               <button
                 key={prog}
                 onClick={() => setProgramFilter(prog)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition whitespace-nowrap shrink-0 ${
                   programFilter === prog
                     ? 'bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-300 shadow-xs'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1363,7 +1418,7 @@ export default function StudentsView({ onSelectStudent }) {
           <select
             value={groupFilter}
             onChange={(e) => setGroupFilter(e.target.value)}
-            className="bg-slate-100 dark:bg-slate-800 border-none text-xs font-semibold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 focus:ring-2 focus:ring-brand-500/20 cursor-pointer"
+            className="bg-slate-100 dark:bg-slate-800 border-none text-xs font-semibold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 focus:ring-2 focus:ring-brand-500/20 cursor-pointer max-w-full min-w-0"
           >
             <option value="all">All Sections</option>
             {metadata.student_groups?.map((sg) => (
@@ -1377,7 +1432,7 @@ export default function StudentsView({ onSelectStudent }) {
           <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
             <button
               onClick={() => setViewMode('grid')}
-              className={`p-1.5 rounded-lg transition ${
+              className={`p-2 sm:p-1.5 rounded-lg transition ${
                 viewMode === 'grid'
                   ? 'bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-300 shadow-xs'
                   : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
@@ -1388,7 +1443,7 @@ export default function StudentsView({ onSelectStudent }) {
             </button>
             <button
               onClick={() => setViewMode('table')}
-              className={`p-1.5 rounded-lg transition ${
+              className={`p-2 sm:p-1.5 rounded-lg transition ${
                 viewMode === 'table'
                   ? 'bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-300 shadow-xs'
                   : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
@@ -1407,6 +1462,20 @@ export default function StudentsView({ onSelectStudent }) {
           <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
           Loading student directory from Frappe backend...
         </div>
+      ) : loadError ? (
+        <div className="glass-panel rounded-3xl p-12 text-center border border-rose-200/80 dark:border-rose-900/60">
+          <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-950/60 text-rose-500 flex items-center justify-center mx-auto mb-3">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200">Unable to Load Student Directory</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm mx-auto">{loadError}</p>
+          <button
+            onClick={loadDirectoryData}
+            className="mt-4 px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition"
+          >
+            Retry
+          </button>
+        </div>
       ) : filteredStudents.length === 0 ? (
         <div className="glass-panel rounded-3xl p-12 text-center border border-slate-200/80 dark:border-slate-800">
           <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 flex items-center justify-center mx-auto mb-3">
@@ -1414,7 +1483,11 @@ export default function StudentsView({ onSelectStudent }) {
           </div>
           <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200">No Students Found</h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm mx-auto">
-            {searchTerm ? `No student matched "${searchTerm}". Try another search term.` : 'No students found in the selected academic filter.'}
+            {searchTerm
+              ? `No student matched "${searchTerm}". Try another search term.`
+              : directory.length === 0
+              ? 'No student records exist yet. Admit applicants or create students to populate the directory.'
+              : 'No students found in the selected academic filter.'}
           </p>
         </div>
       ) : viewMode === 'grid' ? (
@@ -1436,36 +1509,42 @@ export default function StudentsView({ onSelectStudent }) {
                 className="glass-panel p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition shadow-xs space-y-4"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-brand-600 to-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-md shadow-brand-500/20 shrink-0">
                       {initials}
                     </div>
                     <div className="min-w-0">
-                      <h4 className="font-bold text-sm text-slate-900 dark:text-slate-100 truncate">
+                      <h4 className="font-bold text-sm text-slate-900 dark:text-slate-100 truncate" title={stu.student_name}>
                         {stu.student_name}
                       </h4>
-                      <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 mt-0.5">
+                      <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 mt-0.5 break-all">
                         {stu.name}
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0 max-w-[50%]">
                     {stu.roll_number && (
-                      <span className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700">
+                      <span className="shrink-0 px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700">
                         Roll #{stu.roll_number}
                       </span>
                     )}
-                    <span className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-                      Enrolled
-                    </span>
+                    {stu.enabled ? (
+                      <span className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                        {stu.programs && stu.programs.length > 0 ? 'Enrolled' : 'Active'}
+                      </span>
+                    ) : (
+                      <span className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                        Inactive
+                      </span>
+                    )}
                   </div>
                 </div>
 
                 {/* Section & Program Badges */}
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {primaryGroup && (
-                    <span className="px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-[10px] font-semibold border border-indigo-200/60 dark:border-indigo-800">
+                    <span className="px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-[11px] font-semibold border border-indigo-200/60 dark:border-indigo-800 max-w-full break-words">
                       {primaryGroup.student_group}
                     </span>
                   )}
@@ -1473,26 +1552,26 @@ export default function StudentsView({ onSelectStudent }) {
                     stu.programs.map((p, pIdx) => (
                       <span
                         key={pIdx}
-                        className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-semibold border border-slate-200/60 dark:border-slate-700/60 flex items-center gap-1"
+                        className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-semibold border border-slate-200/60 dark:border-slate-700/60 flex items-center gap-1 max-w-full min-w-0"
                       >
-                        <BookOpen className="w-2.5 h-2.5 text-brand-500" />
-                        <span>{p}</span>
+                        <BookOpen className="w-2.5 h-2.5 text-brand-500 shrink-0" />
+                        <span className="truncate" title={p}>{p}</span>
                       </span>
                     ))
                   ) : (
-                    <span className="text-[10px] text-slate-400">Standard Syllabus</span>
+                    <span className="text-[11px] text-slate-400">Not enrolled in a program</span>
                   )}
                 </div>
 
                 {/* Contact & Guardian footer */}
                 <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 space-y-1.5 text-xs text-slate-600 dark:text-slate-400">
-                  <div className="flex items-center gap-2 truncate">
+                  <div className="flex items-center gap-2 min-w-0">
                     <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="truncate font-mono text-[11px]">{stu.email || 'No email registered'}</span>
+                    <span className="truncate font-mono text-[11px]" title={stu.email || ''}>{stu.email || 'No email registered'}</span>
                   </div>
 
                   {stu.guardians && stu.guardians.length > 0 && (
-                    <div className="flex items-center gap-2 truncate text-[11px] text-slate-500">
+                    <div className="flex items-center gap-2 min-w-0 text-[11px] text-slate-500">
                       <HeartHandshake className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       <span className="truncate">{stu.guardians[0].guardian_name} ({stu.guardians[0].relation || 'Parent'})</span>
                     </div>
@@ -1503,7 +1582,7 @@ export default function StudentsView({ onSelectStudent }) {
                 <div className="pt-2 flex items-center gap-2">
                   <button
                     onClick={() => handleOpenProfileModal(stu.name)}
-                    className="flex-1 py-1.5 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-brand-50 dark:hover:bg-brand-950/80 text-slate-700 dark:text-slate-300 hover:text-brand-600 dark:hover:text-brand-400 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                    className="flex-1 py-2 sm:py-1.5 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-brand-50 dark:hover:bg-brand-950/80 text-slate-700 dark:text-slate-300 hover:text-brand-600 dark:hover:text-brand-400 text-xs font-bold transition flex items-center justify-center gap-1.5"
                   >
                     <Eye className="w-3.5 h-3.5" />
                     <span>View Dossier</span>
@@ -1511,7 +1590,7 @@ export default function StudentsView({ onSelectStudent }) {
 
                   <button
                     onClick={() => handleOpenAssignModal(stu)}
-                    className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition"
+                    className="p-2 sm:p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition"
                     title="Assign Cohort / Section"
                   >
                     <Users className="w-3.5 h-3.5" />
@@ -1524,8 +1603,48 @@ export default function StudentsView({ onSelectStudent }) {
       ) : (
         /* Table View */
         <div className="glass-panel rounded-2xl border border-slate-200/80 dark:border-slate-800 overflow-hidden shadow-xs">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+          {/* Mobile stacked list (< md) */}
+          <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800/80">
+            {filteredStudents.map((stu) => (
+              <div key={stu.name} className="p-4 space-y-2.5 text-xs">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-bold text-slate-900 dark:text-slate-100 break-words">{stu.student_name}</div>
+                    <div className="font-mono text-[11px] text-slate-400 break-all">{stu.name}</div>
+                  </div>
+                  <span className="shrink-0 font-mono font-bold text-slate-700 dark:text-slate-300">
+                    {stu.roll_number ? `#${stu.roll_number}` : '—'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] break-words">
+                  <div className="min-w-0">
+                    <span className="block text-slate-400 uppercase tracking-wider text-[10px] font-bold">Program</span>
+                    <span className="text-slate-700 dark:text-slate-300">{stu.programs?.join(', ') || 'Not enrolled'}</span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="block text-slate-400 uppercase tracking-wider text-[10px] font-bold">Section / Cohort</span>
+                    <span className="text-slate-700 dark:text-slate-300">{stu.student_groups?.[0]?.student_group || 'Unassigned'}</span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="block text-slate-400 uppercase tracking-wider text-[10px] font-bold">Guardian</span>
+                    <span className="text-slate-500">{stu.guardians?.[0] ? `${stu.guardians[0].guardian_name}${stu.guardians[0].relation ? ` (${stu.guardians[0].relation})` : ''}` : '—'}</span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="block text-slate-400 uppercase tracking-wider text-[10px] font-bold">Admission</span>
+                    <span className="text-slate-500 font-mono">{stu.joining_date || '—'}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleOpenProfileModal(stu.name)}
+                  className="w-full py-2 px-3 rounded-lg bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-400 font-bold text-xs hover:bg-brand-100 transition"
+                >
+                  View Dossier
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-xs">
               <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-500 uppercase tracking-wider text-[10px] font-bold border-b border-slate-200/80 dark:border-slate-700">
                 <tr>
                   <th className="py-3 px-4">Student</th>
@@ -1542,27 +1661,27 @@ export default function StudentsView({ onSelectStudent }) {
                   <tr key={stu.name} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition">
                     <td className="py-3 px-4">
                       <div className="font-bold text-slate-900 dark:text-slate-100">{stu.student_name}</div>
-                      <div className="font-mono text-[10px] text-slate-400">{stu.name}</div>
+                      <div className="font-mono text-[11px] text-slate-400">{stu.name}</div>
                     </td>
-                    <td className="py-3 px-4 font-mono font-bold text-slate-700 dark:text-slate-300">
+                    <td className="py-3 px-4 font-mono font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
                       {stu.roll_number ? `#${stu.roll_number}` : '—'}
                     </td>
                     <td className="py-3 px-4">
-                      {stu.programs?.join(', ') || 'Standard Syllabus'}
+                      {stu.programs?.join(', ') || 'Not enrolled'}
                     </td>
                     <td className="py-3 px-4">
                       {stu.student_groups?.[0]?.student_group || 'Unassigned'}
                     </td>
                     <td className="py-3 px-4 text-slate-500">
-                      {stu.guardians?.[0] ? `${stu.guardians[0].guardian_name} (${stu.guardians[0].relation})` : '—'}
+                      {stu.guardians?.[0] ? `${stu.guardians[0].guardian_name}${stu.guardians[0].relation ? ` (${stu.guardians[0].relation})` : ''}` : '—'}
                     </td>
-                    <td className="py-3 px-4 text-slate-400 font-mono text-[11px]">
+                    <td className="py-3 px-4 text-slate-400 font-mono text-[11px] whitespace-nowrap">
                       {stu.joining_date || '—'}
                     </td>
                     <td className="py-3 px-4 text-right">
                       <button
                         onClick={() => handleOpenProfileModal(stu.name)}
-                        className="py-1 px-2.5 rounded-lg bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-400 font-bold text-[11px] hover:bg-brand-100 transition"
+                        className="py-1 px-2.5 rounded-lg bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-400 font-bold text-[11px] hover:bg-brand-100 transition whitespace-nowrap"
                       >
                         View Dossier
                       </button>
@@ -1594,7 +1713,8 @@ export default function StudentsView({ onSelectStudent }) {
     const guardiansList = selectedStudentDetail?.guardians || [];
     const studentGroupsList = selectedStudentDetail?.student_groups || [];
     const coursesList = selectedStudentDetail?.enrolled_courses || [];
-    const attendanceStats = selectedStudentDetail?.attendance_summary || { total: 0, present: 0, absent: 0, percentage: 100 };
+    const attendanceStats = selectedStudentDetail?.attendance_summary || { total: 0, present: 0, absent: 0, percentage: null };
+    const hasAttendance = attendanceStats.total > 0 && attendanceStats.percentage != null;
     const logsList = selectedStudentDetail?.recent_logs || [];
 
     const initials = (student.student_name || 'ST')
@@ -1612,13 +1732,13 @@ export default function StudentsView({ onSelectStudent }) {
           <div className="p-4 sm:p-6 bg-gradient-to-r from-brand-600 via-indigo-600 to-purple-600 text-white relative shrink-0">
             <button
               onClick={() => setDetailModalOpen(false)}
-              className="absolute top-5 right-5 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition"
+              className="absolute top-3 right-3 sm:top-5 sm:right-5 w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition z-10"
             >
               <X className="w-4 h-4" />
             </button>
 
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-2xl bg-white/20 border-2 border-white/40 flex items-center justify-center font-black text-xl shadow-md">
+            <div className="flex items-center gap-3 sm:gap-4 pr-10 sm:pr-12">
+              <div className="w-12 h-12 sm:w-16 sm:h-16 shrink-0 overflow-hidden rounded-2xl bg-white/20 border-2 border-white/40 flex items-center justify-center font-black text-lg sm:text-xl shadow-md">
                 {student.image ? (
                   <img src={student.image} alt={student.student_name} className="w-full h-full object-cover rounded-2xl" />
                 ) : (
@@ -1626,15 +1746,17 @@ export default function StudentsView({ onSelectStudent }) {
                 )}
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xl font-black truncate">{student.student_name}</h3>
-                  <span className="px-2 py-0.5 rounded-md bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider">
-                    {student.enabled ? 'Active Student' : 'Inactive'}
-                  </span>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
+                  <h3 className="text-lg sm:text-xl font-black truncate min-w-0 max-w-full" title={student.student_name || ''}>{student.student_name || (loadingDetail ? 'Loading...' : 'Student Record')}</h3>
+                  {student.name && (
+                    <span className="px-2 py-0.5 rounded-md bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider shrink-0">
+                      {student.enabled ? 'Active Student' : 'Inactive'}
+                    </span>
+                  )}
                 </div>
-                <p className="text-xs text-white/80 font-mono mt-0.5">Student ID: {student.name}</p>
+                {student.name && <p className="text-xs text-white/80 font-mono mt-0.5 break-all">Student ID: {student.name}</p>}
                 {studentGroupsList[0] && (
-                  <p className="text-xs text-white/90 font-semibold mt-1">
+                  <p className="text-xs text-white/90 font-semibold mt-1 break-words">
                     {studentGroupsList[0].student_group} {studentGroupsList[0].group_roll_number && `• Roll #${studentGroupsList[0].group_roll_number}`}
                   </p>
                 )}
@@ -1642,11 +1764,11 @@ export default function StudentsView({ onSelectStudent }) {
             </div>
 
             {/* Quick Action Buttons on Staff */}
-            {isStaff && (
-              <div className="mt-4 pt-3 border-t border-white/20 flex items-center gap-2">
+            {isStaff && student.name && (
+              <div className="mt-3 sm:mt-4 pt-3 border-t border-white/20 flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => handleOpenEnrollModal(student.name)}
-                  className="px-3 py-1.5 rounded-xl bg-white text-brand-700 hover:bg-white/90 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                  className="px-3 py-2 sm:py-1.5 rounded-xl bg-white text-brand-700 hover:bg-white/90 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Enroll in Program</span>
@@ -1671,7 +1793,7 @@ export default function StudentsView({ onSelectStudent }) {
                 <button
                   key={t.id}
                   onClick={() => setModalTab(t.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+                  className={`flex items-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap shrink-0 ${
                     active
                       ? 'bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-300 shadow-xs'
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-800'
@@ -1691,30 +1813,36 @@ export default function StudentsView({ onSelectStudent }) {
                 <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
                 Loading detailed student record...
               </div>
+            ) : detailError ? (
+              <div className="p-10 text-center space-y-2">
+                <AlertCircle className="w-8 h-8 text-rose-500 mx-auto" />
+                <p className="text-sm font-bold text-slate-800 dark:text-slate-200">Unable to Load Student Record</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{detailError}</p>
+              </div>
             ) : modalTab === 'overview' ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
                 <div className="space-y-3">
                   <h4 className="font-bold text-slate-400 uppercase tracking-wider text-[11px]">Identity & Demographic Details</h4>
                   <div className="space-y-2">
-                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                    <div className="flex justify-between gap-3 py-1 border-b border-slate-100 dark:border-slate-800">
                       <span className="text-slate-500">Date of Birth:</span>
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">{student.date_of_birth || '—'}</span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 text-right min-w-0 break-words">{student.date_of_birth || '—'}</span>
                     </div>
-                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                    <div className="flex justify-between gap-3 py-1 border-b border-slate-100 dark:border-slate-800">
                       <span className="text-slate-500">Gender:</span>
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">{student.gender || 'Not specified'}</span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 text-right min-w-0 break-words">{student.gender || 'Not specified'}</span>
                     </div>
-                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                    <div className="flex justify-between gap-3 py-1 border-b border-slate-100 dark:border-slate-800">
                       <span className="text-slate-500">Blood Group:</span>
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">{student.blood_group || '—'}</span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 text-right min-w-0 break-words">{student.blood_group || '—'}</span>
                     </div>
-                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                    <div className="flex justify-between gap-3 py-1 border-b border-slate-100 dark:border-slate-800">
                       <span className="text-slate-500">Nationality:</span>
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">{student.nationality || 'Indian'}</span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 text-right min-w-0 break-words">{student.nationality || '—'}</span>
                     </div>
-                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                    <div className="flex justify-between gap-3 py-1 border-b border-slate-100 dark:border-slate-800">
                       <span className="text-slate-500">Date of Admission:</span>
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">{student.joining_date || '—'}</span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 text-right min-w-0 break-words">{student.joining_date || '—'}</span>
                     </div>
                   </div>
                 </div>
@@ -1722,22 +1850,22 @@ export default function StudentsView({ onSelectStudent }) {
                 <div className="space-y-3">
                   <h4 className="font-bold text-slate-400 uppercase tracking-wider text-[11px]">Contact & Address</h4>
                   <div className="space-y-2">
-                    <div className="flex items-center gap-2 py-1 border-b border-slate-100 dark:border-slate-800">
-                      <Mail className="w-3.5 h-3.5 text-slate-400" />
-                      <span className="font-mono text-slate-700 dark:text-slate-300">{student.student_email_id || 'No email registered'}</span>
+                    <div className="flex items-center gap-2 py-1 border-b border-slate-100 dark:border-slate-800 min-w-0">
+                      <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="font-mono text-slate-700 dark:text-slate-300 min-w-0 break-all">{student.student_email_id || 'No email registered'}</span>
                     </div>
                     <div className="flex items-center gap-2 py-1 border-b border-slate-100 dark:border-slate-800">
-                      <Phone className="w-3.5 h-3.5 text-slate-400" />
+                      <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       <span className="font-mono text-slate-700 dark:text-slate-300">{student.student_mobile_number || 'No phone registered'}</span>
                     </div>
                     <div className="flex items-start gap-2 py-1">
                       <MapPin className="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" />
-                      <span className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                      <span className="text-slate-600 dark:text-slate-400 leading-relaxed min-w-0 break-words">
                         {student.address_line_1 ? `${student.address_line_1}, ` : ''}
                         {student.city ? `${student.city}, ` : ''}
                         {student.state ? `${student.state} - ` : ''}
                         {student.pincode || ''}
-                        {!student.address_line_1 && !student.city && 'Registered Campus Residence'}
+                        {!student.address_line_1 && !student.city && !student.state && !student.pincode && 'No address on record'}
                       </span>
                     </div>
                   </div>
@@ -1745,15 +1873,15 @@ export default function StudentsView({ onSelectStudent }) {
               </div>
             ) : modalTab === 'courses' ? (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
                     <h4 className="font-bold text-slate-400 uppercase tracking-wider text-[11px]">Enrolled Subject Modules</h4>
                     <p className="text-[11px] text-slate-500">Official curriculum course enrollments & active electives</p>
                   </div>
                   {(isStaff || isAdmin) && (
                     <button
                       onClick={() => handleOpenAddCourseModal(student.name)}
-                      className="py-1.5 px-3 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold text-xs transition flex items-center gap-1.5 shadow-xs"
+                      className="py-2 sm:py-1.5 px-3 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold text-xs transition flex items-center gap-1.5 shadow-xs"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Enroll Elective</span>
@@ -1768,21 +1896,21 @@ export default function StudentsView({ onSelectStudent }) {
                       : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
                   }`}>
                     {courseActionMsg.type === 'error' ? <AlertCircle className="w-4 h-4 shrink-0" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
-                    <span>{courseActionMsg.text}</span>
+                    <span className="min-w-0 break-words">{courseActionMsg.text}</span>
                   </div>
                 )}
 
                 {/* Add Elective Course Drawer / Form */}
                 {showAddCourseModal && (
                   <div className="p-4 rounded-2xl bg-brand-50/60 dark:bg-brand-950/40 border border-brand-200 dark:border-brand-800/80 space-y-3 animate-fade-in">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-xs text-brand-900 dark:text-brand-200 flex items-center gap-1.5">
-                        <BookOpen className="w-4 h-4 text-brand-600 dark:text-brand-400" />
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-xs text-brand-900 dark:text-brand-200 flex items-center gap-1.5 min-w-0">
+                        <BookOpen className="w-4 h-4 text-brand-600 dark:text-brand-400 shrink-0" />
                         Select Elective Course to Enroll
                       </span>
                       <button
                         onClick={() => setShowAddCourseModal(false)}
-                        className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        className="p-2 sm:p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 shrink-0"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -1797,7 +1925,7 @@ export default function StudentsView({ onSelectStudent }) {
                         <select
                           value={selectedCourseToEnroll}
                           onChange={(e) => setSelectedCourseToEnroll(e.target.value)}
-                          className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                          className="flex-1 min-w-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
                         >
                           {availableCoursesData.map((c) => (
                             <option key={c.course} value={c.course}>
@@ -1823,10 +1951,10 @@ export default function StudentsView({ onSelectStudent }) {
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {coursesList.map((c, i) => (
-                      <div key={i} className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 flex items-center justify-between group">
-                        <div className="space-y-0.5">
-                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">{c.course_name || c.course}</span>
-                          <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
+                      <div key={i} className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 flex items-center justify-between gap-3 group">
+                        <div className="space-y-0.5 min-w-0">
+                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block break-words">{c.course_name || c.course}</span>
+                          <div className="flex flex-wrap items-center gap-x-2 text-[11px] text-slate-400 font-mono break-all">
                             <span>Code: {c.course}</span>
                             {c.enrollment_date && (
                               <span>• Enrolled: {c.enrollment_date}</span>
@@ -1834,14 +1962,14 @@ export default function StudentsView({ onSelectStudent }) {
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          <span className="px-2 py-0.5 rounded-lg bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-400 text-[10px] font-bold">
-                            {c.program || 'Standard'}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="px-2 py-0.5 rounded-lg bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-400 text-[11px] font-bold">
+                            {c.program || '—'}
                           </span>
                           {(isStaff || isAdmin) && c.enrollment_id && (
                             <button
                               onClick={() => handleDropCourse(student.name, c.enrollment_id, c.course_name || c.course)}
-                              className="p-1 rounded-lg text-slate-300 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition opacity-0 group-hover:opacity-100"
+                              className="p-2 sm:p-1 rounded-lg text-slate-300 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
                               title={`Drop ${c.course_name || c.course}`}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -1856,14 +1984,17 @@ export default function StudentsView({ onSelectStudent }) {
             ) : modalTab === 'enrollments' ? (
               <div className="space-y-3">
                 <h4 className="font-bold text-slate-400 uppercase tracking-wider text-[11px]">Program Enrollment Documents</h4>
+                {programsList.length === 0 && (
+                  <p className="text-xs text-slate-400 py-3">No program enrollments recorded.</p>
+                )}
                 <div className="divide-y divide-slate-100 dark:divide-slate-800">
                   {programsList.map((pe, idx) => (
-                    <div key={idx} className="py-2.5 flex items-center justify-between">
-                      <div>
-                        <h5 className="font-bold text-xs text-slate-800 dark:text-slate-200">{pe.program}</h5>
-                        <span className="text-[11px] font-mono text-slate-400">{pe.program_enrollment}</span>
+                    <div key={idx} className="py-2.5 flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <h5 className="font-bold text-xs text-slate-800 dark:text-slate-200 break-words">{pe.program}</h5>
+                        <span className="text-[11px] font-mono text-slate-400 break-all">{pe.program_enrollment}</span>
                       </div>
-                      <span className="px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-bold">
+                      <span className="px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-bold">
                         {pe.academic_year} {pe.academic_term ? `• ${pe.academic_term}` : ''}
                       </span>
                     </div>
@@ -1873,16 +2004,19 @@ export default function StudentsView({ onSelectStudent }) {
             ) : modalTab === 'guardians' ? (
               <div className="space-y-3">
                 <h4 className="font-bold text-slate-400 uppercase tracking-wider text-[11px]">Authorized Guardians</h4>
+                {guardiansList.length === 0 && (
+                  <p className="text-xs text-slate-400 py-3">No guardians linked to this student.</p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {guardiansList.map((g, idx) => (
                     <div key={idx} className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-xs text-slate-800 dark:text-slate-200">{g.guardian_name}</span>
-                        <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-bold text-xs text-slate-800 dark:text-slate-200 min-w-0 break-words">{g.guardian_name}</span>
+                        <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold shrink-0">
                           {g.relation || 'Parent'}
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-500 font-mono">{g.mobile_number || g.email_address || 'No direct phone'}</p>
+                      <p className="text-[11px] text-slate-500 font-mono break-all">{g.mobile_number || g.email_address || 'No direct phone'}</p>
                     </div>
                   ))}
                 </div>
@@ -1891,15 +2025,15 @@ export default function StudentsView({ onSelectStudent }) {
               <div className="space-y-3">
                 <h4 className="font-bold text-slate-400 uppercase tracking-wider text-[11px]">Attendance Record</h4>
                 <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 space-y-2 text-xs">
-                  <div className="flex justify-between">
+                  <div className="flex justify-between gap-3">
                     <span className="text-slate-500">Overall Attendance Compliance:</span>
-                    <span className="font-bold text-brand-600 dark:text-brand-400">{attendanceStats.percentage}%</span>
+                    <span className="font-bold text-brand-600 dark:text-brand-400">{hasAttendance ? `${attendanceStats.percentage}%` : 'No records yet'}</span>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between gap-3">
                     <span className="text-slate-500">Present Sessions Attended:</span>
                     <span className="font-bold text-emerald-600 dark:text-emerald-400">{attendanceStats.present}</span>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between gap-3">
                     <span className="text-slate-500">Absent Sessions:</span>
                     <span className="font-bold text-rose-600 dark:text-rose-400">{attendanceStats.absent}</span>
                   </div>
@@ -1914,12 +2048,12 @@ export default function StudentsView({ onSelectStudent }) {
                   <div className="space-y-2">
                     {logsList.map((log, idx) => (
                       <div key={idx} className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 space-y-1">
-                        <div className="flex items-center justify-between text-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                           <span className="font-bold text-amber-600 dark:text-amber-400 uppercase text-[10px]">{log.type}</span>
-                          <span className="font-mono text-slate-400 text-[10px]">{log.date}</span>
+                          <span className="font-mono text-slate-400 text-[11px]">{log.date}</span>
                         </div>
                         <div 
-                          className="text-xs text-slate-700 dark:text-slate-300 pt-1"
+                          className="text-xs text-slate-700 dark:text-slate-300 pt-1 break-words"
                           dangerouslySetInnerHTML={{ __html: log.log }}
                         />
                       </div>
@@ -2010,13 +2144,13 @@ export default function StudentsView({ onSelectStudent }) {
       <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl my-auto overflow-hidden">
           {/* Modal Header */}
-          <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center shadow-xs">
+          <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center shadow-xs shrink-0">
                 {enrollMode === 'bulk' ? <Users className="w-5 h-5" /> : <GraduationCap className="w-5 h-5" />}
               </div>
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <div className="min-w-0">
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-x-2 gap-y-1">
                   {enrollMode === 'bulk' ? 'Bulk Cohort Enrollment' : 'New Program Enrollment'}
                   <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 border border-brand-200/60 dark:border-brand-800">
                     {enrollMode === 'bulk' ? 'Batch Mode' : 'Single Student'}
@@ -2031,7 +2165,7 @@ export default function StudentsView({ onSelectStudent }) {
             </div>
             <button
               onClick={() => setEnrollModalOpen(false)}
-              className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
+              className="p-2 sm:p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition shrink-0"
             >
               <X className="w-4 h-4" />
             </button>
@@ -2044,13 +2178,13 @@ export default function StudentsView({ onSelectStudent }) {
                 <button
                   type="button"
                   onClick={() => setEnrollMode('single')}
-                  className={`flex-1 py-1.5 text-xs font-bold rounded-xl transition flex items-center justify-center gap-2 ${
+                  className={`flex-1 min-w-0 py-2 sm:py-1.5 px-1 text-xs font-bold rounded-xl transition flex items-center justify-center gap-2 text-center leading-tight ${
                     enrollMode === 'single'
                       ? 'bg-white dark:bg-slate-900 text-brand-600 dark:text-brand-400 shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
                   }`}
                 >
-                  <User className="w-3.5 h-3.5" />
+                  <User className="w-3.5 h-3.5 shrink-0" />
                   <span>Single Student</span>
                 </button>
                 <button
@@ -2061,13 +2195,13 @@ export default function StudentsView({ onSelectStudent }) {
                       setBulkSelectedStudents(directory.map((s) => s.name));
                     }
                   }}
-                  className={`flex-1 py-1.5 text-xs font-bold rounded-xl transition flex items-center justify-center gap-2 ${
+                  className={`flex-1 min-w-0 py-2 sm:py-1.5 px-1 text-xs font-bold rounded-xl transition flex items-center justify-center gap-2 text-center leading-tight ${
                     enrollMode === 'bulk'
                       ? 'bg-white dark:bg-slate-900 text-brand-600 dark:text-brand-400 shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
                   }`}
                 >
-                  <Users className="w-3.5 h-3.5" />
+                  <Users className="w-3.5 h-3.5 shrink-0" />
                   <span>Bulk / Cohort Batch ({directory.length})</span>
                 </button>
               </div>
@@ -2075,14 +2209,14 @@ export default function StudentsView({ onSelectStudent }) {
               {enrollError && (
                 <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{enrollError}</span>
+                  <span className="min-w-0 break-words">{enrollError}</span>
                 </div>
               )}
 
               {enrollSuccess && (
                 <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>{enrollSuccess}</span>
+                  <span className="min-w-0 break-words">{enrollSuccess}</span>
                 </div>
               )}
             {/* SINGLE MODE: Target Student Select */}
@@ -2112,7 +2246,7 @@ export default function StudentsView({ onSelectStudent }) {
               /* BULK MODE: Student Selection Checklist with Filters */
               <div className="space-y-2.5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <label className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                  <label className="font-bold text-slate-700 dark:text-slate-300 flex flex-wrap items-center gap-2">
                     <span>Select Students to Enroll</span>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-brand-50 text-brand-700 dark:bg-brand-950/80 dark:text-brand-300 border border-brand-200/60 dark:border-brand-800">
                       {bulkSelectedStudents.length} of {directory.length} Selected
@@ -2152,7 +2286,7 @@ export default function StudentsView({ onSelectStudent }) {
                       value={bulkSearch}
                       onChange={(e) => setBulkSearch(e.target.value)}
                       placeholder="Filter by name or ID..."
-                      className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                      className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl pl-8 pr-3 py-2 sm:py-1.5 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
                     />
                   </div>
 
@@ -2173,7 +2307,7 @@ export default function StudentsView({ onSelectStudent }) {
                         });
                         setBulkSelectedStudents(matching.map((s) => s.name));
                       }}
-                      className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                      className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 sm:py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
                     >
                       <option value="all">All Student Cohorts</option>
                       <option value="unenrolled">Unenrolled Students Only</option>
@@ -2187,7 +2321,7 @@ export default function StudentsView({ onSelectStudent }) {
                 </div>
 
                 {/* Select All Visible toggle */}
-                <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200/60 dark:border-slate-700/60 text-[11px]">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200/60 dark:border-slate-700/60 text-[11px]">
                   <label className="flex items-center gap-2 cursor-pointer select-none font-semibold text-slate-600 dark:text-slate-300">
                     <input
                       type="checkbox"
@@ -2232,23 +2366,23 @@ export default function StudentsView({ onSelectStudent }) {
                               {s.student_name ? s.student_name.charAt(0) : 'S'}
                             </div>
                             <div className="min-w-0">
-                              <p className="font-bold text-slate-800 dark:text-slate-200 truncate leading-tight">
+                              <p className="font-bold text-slate-800 dark:text-slate-200 truncate leading-tight" title={s.student_name}>
                                 {s.student_name}
                               </p>
-                              <p className="text-[10px] font-mono text-slate-400 truncate">
+                              <p className="text-[11px] font-mono text-slate-400 truncate">
                                 {s.name}
                               </p>
                             </div>
                           </div>
 
-                          <div className="shrink-0 flex items-center gap-1 flex-wrap justify-end max-w-[220px]">
+                          <div className="shrink-0 flex items-center gap-1 flex-wrap justify-end max-w-[45%] sm:max-w-[220px]">
                             {(() => {
                               const progs = getStudentPrograms(s);
                               if (progs.length > 0) {
                                 return progs.map((prog, pIdx) => (
                                   <span
                                     key={pIdx}
-                                    className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-brand-50/80 dark:bg-brand-950/60 text-brand-700 dark:text-brand-300 border border-brand-200/60 dark:border-brand-800/60"
+                                    className="px-2 py-0.5 rounded-md text-[11px] font-semibold max-w-full truncate bg-brand-50/80 dark:bg-brand-950/60 text-brand-700 dark:text-brand-300 border border-brand-200/60 dark:border-brand-800/60"
                                   >
                                     {prog}
                                   </span>
@@ -2301,14 +2435,14 @@ export default function StudentsView({ onSelectStudent }) {
 
               {/* Target Academic Year */}
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 min-w-0">
                     Academic Year <span className="text-rose-500">*</span>
                   </label>
                   <button
                     type="button"
                     onClick={handleOpenCreateYearModal}
-                    className="text-[11px] font-bold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1"
+                    className="text-[11px] font-bold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1 shrink-0 whitespace-nowrap"
                     title="Define and create a new academic year period"
                   >
                     <Plus className="w-3 h-3" />
@@ -2331,14 +2465,14 @@ export default function StudentsView({ onSelectStudent }) {
 
               {/* Target Section / Student Group */}
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 min-w-0">
                     Target Section / Cohort (Optional)
                   </label>
                   <button
                     type="button"
                     onClick={() => handleOpenCreateGroupModal(enrollData.program, enrollData.academic_year)}
-                    className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer shrink-0 whitespace-nowrap"
                   >
                     <Plus className="w-3 h-3" />
                     <span>New Section</span>
@@ -2358,21 +2492,21 @@ export default function StudentsView({ onSelectStudent }) {
                       </option>
                     ))}
                 </select>
-                <p className="text-[10px] text-slate-400 mt-1">
+                <p className="text-[11px] text-slate-400 mt-1">
                   Assigns enrolled students to this section roster & timetable
                 </p>
               </div>
 
               {/* Academic Term */}
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 min-w-0">
                     Academic Term (Optional)
                   </label>
                   <button
                     type="button"
                     onClick={() => handleOpenCreateTermModal(enrollData.academic_year)}
-                    className="text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    className="text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer shrink-0 whitespace-nowrap"
                   >
                     <Plus className="w-3 h-3" />
                     <span>New Term</span>
@@ -2399,7 +2533,7 @@ export default function StudentsView({ onSelectStudent }) {
 
             {/* Modal Footer (Always Pinned & Visible) */}
             <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 shrink-0 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-between gap-3">
-              <span className="text-[11px] text-slate-400 truncate">
+              <span className="text-[11px] text-slate-400 truncate min-w-0">
                 {enrollMode === 'bulk'
                   ? `${bulkSelectedStudents.length} student(s) selected`
                   : 'Individual enrollment record'}
@@ -2446,21 +2580,21 @@ export default function StudentsView({ onSelectStudent }) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl">
-          <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+          <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
                 <Users className="w-5 h-5" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
                   Assign Section & Cohort
                 </h3>
-                <p className="text-xs text-slate-400">{assignData.student_name} ({assignData.student})</p>
+                <p className="text-xs text-slate-400 break-words">{assignData.student_name} ({assignData.student})</p>
               </div>
             </div>
             <button
               onClick={() => setAssignModalOpen(false)}
-              className="p-1 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
+              className="p-2 sm:p-1 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition shrink-0"
             >
               <X className="w-4 h-4" />
             </button>
@@ -2469,13 +2603,13 @@ export default function StudentsView({ onSelectStudent }) {
           <form onSubmit={handleSubmitAssign} className="flex-1 min-h-0 flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 text-xs">
               {assignError && (
-                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300">
+                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 break-words">
                   {assignError}
                 </div>
               )}
 
               {assignSuccess && (
-                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-700 dark:text-emerald-300">
+                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-700 dark:text-emerald-300 break-words">
                   {assignSuccess}
                 </div>
               )}
@@ -2546,12 +2680,12 @@ export default function StudentsView({ onSelectStudent }) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl">
-          <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-xs">
+          <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-xs shrink-0">
                 <Calendar className="w-5 h-5" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
                   New Academic Year
                 </h3>
@@ -2560,7 +2694,7 @@ export default function StudentsView({ onSelectStudent }) {
             </div>
             <button
               onClick={() => setCreateYearModalOpen(false)}
-              className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
+              className="p-2 sm:p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition shrink-0"
             >
               <X className="w-4 h-4" />
             </button>
@@ -2571,14 +2705,14 @@ export default function StudentsView({ onSelectStudent }) {
               {createYearError && (
                 <div className="p-3 rounded-xl bg-rose-50 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 text-xs font-semibold border border-rose-200 dark:border-rose-800 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{createYearError}</span>
+                  <span className="min-w-0 break-words">{createYearError}</span>
                 </div>
               )}
 
               {createYearSuccess && (
                 <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 text-xs font-semibold border border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>{createYearSuccess}</span>
+                  <span className="min-w-0 break-words">{createYearSuccess}</span>
                 </div>
               )}
 
@@ -2595,7 +2729,7 @@ export default function StudentsView({ onSelectStudent }) {
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-bold focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-hidden font-mono"
                   required
                 />
-                <p className="text-[10px] text-slate-400 mt-1">
+                <p className="text-[11px] text-slate-400 mt-1">
                   Standard format: YYYY-YYYY (e.g. 2028-2029)
                 </p>
               </div>
@@ -2632,46 +2766,32 @@ export default function StudentsView({ onSelectStudent }) {
 
               {/* Quick preset buttons */}
               <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[10px] text-slate-400 font-semibold">Quick Presets:</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewYearData({
-                      academic_year_name: '2028-2029',
-                      year_start_date: '2028-04-01',
-                      year_end_date: '2029-03-31',
-                    });
-                  }}
-                  className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-mono text-slate-600 dark:text-slate-300 hover:bg-slate-200"
-                >
-                  2028-2029
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewYearData({
-                      academic_year_name: '2029-2030',
-                      year_start_date: '2029-04-01',
-                      year_end_date: '2030-03-31',
-                    });
-                  }}
-                  className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-mono text-slate-600 dark:text-slate-300 hover:bg-slate-200"
-                >
-                  2029-2030
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewYearData({
-                      academic_year_name: '2030-2031',
-                      year_start_date: '2030-04-01',
-                      year_end_date: '2031-03-31',
-                    });
-                  }}
-                  className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-mono text-slate-600 dark:text-slate-300 hover:bg-slate-200"
-                >
-                  2030-2031
-                </button>
+                <span className="text-[11px] text-slate-400 font-semibold">Quick Presets:</span>
+                {(() => {
+                  // Presets follow the latest academic year on record (or the current year)
+                  const latestEnd = (metadata.academic_years || [])
+                    .map((y) => y.year_end_date)
+                    .filter(Boolean)
+                    .sort()
+                    .pop();
+                  const base = latestEnd ? new Date(latestEnd).getFullYear() : new Date().getFullYear();
+                  return [base, base + 1, base + 2];
+                })().map((startYear) => (
+                  <button
+                    key={startYear}
+                    type="button"
+                    onClick={() => {
+                      setNewYearData({
+                        academic_year_name: `${startYear}-${startYear + 1}`,
+                        year_start_date: `${startYear}-04-01`,
+                        year_end_date: `${startYear + 1}-03-31`,
+                      });
+                    }}
+                    className="px-2 py-1 sm:py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[11px] font-mono text-slate-600 dark:text-slate-300 hover:bg-slate-200"
+                  >
+                    {startYear}-{startYear + 1}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -2714,12 +2834,12 @@ export default function StudentsView({ onSelectStudent }) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl">
-          <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-2xl bg-sky-50 dark:bg-sky-950/80 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs">
+          <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-sky-50 dark:bg-sky-950/80 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs shrink-0">
                 <Clock className="w-5 h-5" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
                   New Academic Term
                 </h3>
@@ -2728,7 +2848,7 @@ export default function StudentsView({ onSelectStudent }) {
             </div>
             <button
               onClick={() => setCreateTermModalOpen(false)}
-              className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition cursor-pointer"
+              className="p-2 sm:p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition cursor-pointer shrink-0"
             >
               <X className="w-4 h-4" />
             </button>
@@ -2739,14 +2859,14 @@ export default function StudentsView({ onSelectStudent }) {
               {createTermError && (
                 <div className="p-3 rounded-xl bg-rose-50 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 text-xs font-semibold border border-rose-200 dark:border-rose-800 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{createTermError}</span>
+                  <span className="min-w-0 break-words">{createTermError}</span>
                 </div>
               )}
 
               {createTermSuccess && (
                 <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 text-xs font-semibold border border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>{createTermSuccess}</span>
+                  <span className="min-w-0 break-words">{createTermSuccess}</span>
                 </div>
               )}
 
@@ -2769,7 +2889,7 @@ export default function StudentsView({ onSelectStudent }) {
                   ))}
                 </select>
                 {selectedYearObj && (
-                  <p className="text-[10px] text-slate-400 mt-1">
+                  <p className="text-[11px] text-slate-400 mt-1">
                     Calendar Period: {selectedYearObj.year_start_date} to {selectedYearObj.year_end_date}
                   </p>
                 )}
@@ -2792,14 +2912,14 @@ export default function StudentsView({ onSelectStudent }) {
 
               {/* Quick Preset Badges */}
               <div className="space-y-1">
-                <span className="text-[10px] text-slate-400 font-semibold block">Presets:</span>
+                <span className="text-[11px] text-slate-400 font-semibold block">Presets:</span>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {['Term 1', 'Term 2', 'Semester 1', 'Semester 2', 'Summer Term'].map((preset) => (
                     <button
                       key={preset}
                       type="button"
                       onClick={() => applyTermPreset(preset)}
-                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition ${
+                      className={`px-2.5 py-1.5 sm:py-1 rounded-lg text-[11px] font-bold border transition ${
                         newTermData.term_name === preset
                           ? 'bg-sky-500 text-white border-sky-500 shadow-xs'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200 cursor-pointer'
@@ -2846,8 +2966,8 @@ export default function StudentsView({ onSelectStudent }) {
 
               {/* Live Preview Pill */}
               <div className="p-2.5 rounded-xl bg-sky-50/70 dark:bg-sky-950/40 border border-sky-100 dark:border-sky-900/60 flex items-center justify-between gap-2">
-                <span className="text-[10px] font-semibold text-slate-400">Term ID Preview:</span>
-                <span className="text-[11px] font-mono font-bold text-sky-700 dark:text-sky-300 truncate">
+                <span className="text-[11px] font-semibold text-slate-400 shrink-0">Term ID Preview:</span>
+                <span className="text-[11px] font-mono font-bold text-sky-700 dark:text-sky-300 truncate min-w-0" title={generatedTermTitle}>
                   {generatedTermTitle}
                 </span>
               </div>
@@ -2887,12 +3007,12 @@ export default function StudentsView({ onSelectStudent }) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl">
-          <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-xs">
+          <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-xs shrink-0">
                 <Layers className="w-5 h-5" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
                   New Section / Student Group
                 </h3>
@@ -2901,7 +3021,7 @@ export default function StudentsView({ onSelectStudent }) {
             </div>
             <button
               onClick={() => setCreateGroupModalOpen(false)}
-              className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition cursor-pointer"
+              className="p-2 sm:p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition cursor-pointer shrink-0"
             >
               <X className="w-4 h-4" />
             </button>
@@ -2912,14 +3032,14 @@ export default function StudentsView({ onSelectStudent }) {
               {createGroupError && (
                 <div className="p-3 rounded-xl bg-rose-50 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 text-xs font-semibold border border-rose-200 dark:border-rose-800 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{createGroupError}</span>
+                  <span className="min-w-0 break-words">{createGroupError}</span>
                 </div>
               )}
 
               {createGroupSuccess && (
                 <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 text-xs font-semibold border border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>{createGroupSuccess}</span>
+                  <span className="min-w-0 break-words">{createGroupSuccess}</span>
                 </div>
               )}
 
@@ -2945,14 +3065,14 @@ export default function StudentsView({ onSelectStudent }) {
 
               {/* Quick Section Letter Selector */}
               <div className="space-y-1">
-                <span className="text-[10px] text-slate-400 font-semibold block">Quick Section Letter:</span>
+                <span className="text-[11px] text-slate-400 font-semibold block">Quick Section Letter:</span>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {['A', 'B', 'C', 'D', 'E', 'Honor'].map((letter) => (
                     <button
                       key={letter}
                       type="button"
                       onClick={() => handleSectionLetterClick(letter)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold border transition ${
+                      className={`px-3 py-1.5 sm:py-1 rounded-lg text-xs font-bold border transition ${
                         newGroupData.section_letter === letter
                           ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200 cursor-pointer'

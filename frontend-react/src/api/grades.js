@@ -4,8 +4,20 @@ export const gradesApi = {
   getQuizStatus: (quiz_name, student = null) => 
     frappeCall('education.education.api.get_quiz_status', { quiz_name, student }),
 
-  submitQuizAssessment: ({ quiz_name, answers, course_name, student, time_taken }) => 
-    frappeCall('education.education.api.submit_quiz_assessment', { quiz_name, answers, course_name, student, time_taken }),
+  // Accepts an object ({ quiz_name, answers, ... }) or positional args
+  // (quiz_name, answers, course_name, student, time_taken) — CoursesView uses the latter.
+  submitQuizAssessment: (quizOrArgs, answers, course_name, student, time_taken) => {
+    const args = quizOrArgs && typeof quizOrArgs === 'object'
+      ? quizOrArgs
+      : { quiz_name: quizOrArgs, answers, course_name, student, time_taken };
+    return frappeCall('education.education.api.submit_quiz_assessment', {
+      quiz_name: args.quiz_name,
+      answers: args.answers,
+      course_name: args.course_name || undefined,
+      student: args.student || undefined,
+      time_taken: args.time_taken || 0,
+    });
+  },
 
   getQuizStudentSubmissions: (quiz_name, course_name = null) => 
     frappeCall('education.education.api.get_quiz_student_submissions', { quiz_name, course_name }),
@@ -51,6 +63,9 @@ export const gradesApi = {
 
   getBatchReportCardsData: (params = {}) =>
     frappeCall('education.education.api.get_batch_report_cards_data', params),
+
+  getReportsToolsSummary: () =>
+    frappeCall('education.education.api.get_reports_tools_summary'),
 };
 
 export default gradesApi;

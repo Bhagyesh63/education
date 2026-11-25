@@ -1,3 +1,4 @@
+import { todayISO } from '../utils/date';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Award, 
@@ -41,6 +42,8 @@ export default function AchievementsView() {
 
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [schoolName, setSchoolName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTypeFilter, setSelectedTypeFilter] = useState('all'); // 'all' | 'Achievement' | 'Academic' | 'General' | 'Medical'
   const [selectedProgramFilter, setSelectedProgramFilter] = useState('all');
@@ -50,13 +53,14 @@ export default function AchievementsView() {
   // Modal state for recording new achievement / log (Staff / Faculty only)
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [directoryStudents, setDirectoryStudents] = useState([]);
+  const [enrollmentMeta, setEnrollmentMeta] = useState({ programs: [], academic_years: [], academic_terms: [] });
   const [formData, setFormData] = useState({
     student: '',
     log_type: 'Achievement',
-    program: 'Standard 5',
-    academic_year: '2026-2027',
-    academic_term: '2026-2027 (Term 1)',
-    date: new Date().toISOString().split('T')[0],
+    program: '',
+    academic_year: '',
+    academic_term: '',
+    date: todayISO(),
     log: '',
   });
   const [submitting, setSubmitting] = useState(false);
@@ -70,25 +74,60 @@ export default function AchievementsView() {
   // Delete Log State
   const [deletingId, setDeletingId] = useState(null);
 
-  // Fetch directory students for modal & filter if staff
+  // Institution name for the printable certificate (from Education Settings)
   useEffect(() => {
-    if (isStaff) {
-      api.getStudentDirectory()
-        .then((data) => {
-          if (Array.isArray(data)) {
-            setDirectoryStudents(data);
-            if (data.length > 0 && !formData.student) {
-              setFormData((prev) => ({ ...prev, student: data[0].name }));
-            }
+    if (typeof api.getSchoolSettings !== 'function') return;
+    api.getSchoolSettings()
+      .then((data) => setSchoolName(data?.name || ''))
+      .catch(() => setSchoolName(''));
+  }, []);
+
+  // Fetch directory students + enrollment metadata (programs, years, terms) for staff
+  useEffect(() => {
+    if (!isStaff) return;
+    api.getStudentDirectory()
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setDirectoryStudents(data);
+          if (data.length > 0) {
+            setFormData((prev) => (prev.student ? prev : { ...prev, student: data[0].name, program: data[0].program || prev.program }));
           }
-        })
-        .catch(() => {});
-    }
+        }
+      })
+      .catch((err) => console.error('Error fetching student directory:', err));
+    api.getEnrollmentMetadata()
+      .then((meta) => {
+        if (meta) {
+          setEnrollmentMeta({
+            programs: meta.programs || [],
+            academic_years: meta.academic_years || [],
+            academic_terms: meta.academic_terms || [],
+          });
+        }
+      })
+      .catch((err) => console.error('Error fetching enrollment metadata:', err));
   }, [isStaff]);
+
+  // Select a student in the record form and default the program to their current enrollment
+  const handleFormStudentChange = (studentId) => {
+    const stu = directoryStudents.find((s) => s.name === studentId);
+    setFormData((prev) => ({ ...prev, student: studentId, program: stu?.program || prev.program }));
+  };
+
+  // Academic term selection also determines the academic year of the record
+  const handleFormTermChange = (termName) => {
+    const term = enrollmentMeta.academic_terms.find((t) => t.name === termName);
+    setFormData((prev) => ({
+      ...prev,
+      academic_term: termName,
+      academic_year: term?.academic_year || (termName ? prev.academic_year : ''),
+    }));
+  };
 
   // Main fetch function for student logs & achievements
   const fetchLogs = () => {
     setLoading(true);
+    setLoadError('');
     let targetStudent = null;
 
     if (isStaff) {
@@ -104,6 +143,7 @@ export default function AchievementsView() {
       .catch((err) => {
         console.error('Error fetching student logs:', err);
         setLogs([]);
+        setLoadError(err.message || 'Failed to load student records.');
       })
       .finally(() => setLoading(false));
   };
@@ -148,9 +188,9 @@ export default function AchievementsView() {
         student: formData.student,
         log_type: formData.log_type,
         log: `<p>${formData.log.trim()}</p>`,
-        program: formData.program,
-        academic_year: formData.academic_year,
-        academic_term: formData.academic_term,
+        program: formData.program || null,
+        academic_year: formData.academic_year || null,
+        academic_term: formData.academic_term || null,
         date: formData.date,
       });
 
@@ -205,12 +245,15 @@ export default function AchievementsView() {
   });
 
   const availablePrograms = Array.from(
-    new Set(['Standard 5', 'Standard 6', ...logs.map((a) => a.program).filter(Boolean)])
+    new Set(logs.map((a) => a.program).filter(Boolean))
   ).sort();
 
   const availableYears = Array.from(
-    new Set(['2026-2027', '2027-2028', ...logs.map((a) => a.academic_year).filter(Boolean)])
+    new Set(logs.map((a) => a.academic_year).filter(Boolean))
   ).sort();
+
+  const latestTerm = logs.find((a) => a.academic_term)?.academic_term;
+  const staffFilterName = directoryStudents.find((s) => s.name === staffStudentFilter)?.student_name || staffStudentFilter;
 
   // Helper for type badges and colors
   const getTypeBadge = (type) => {
@@ -254,14 +297,14 @@ export default function AchievementsView() {
     <div className="space-y-6 max-w-full overflow-hidden animate-fade-in">
       {/* Top Banner Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-yellow-400 text-white flex items-center justify-center shadow-lg shadow-amber-500/20 shrink-0">
-            <Trophy className="w-6 h-6" />
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-yellow-400 text-white flex items-center justify-center shadow-lg shadow-amber-500/20 shrink-0">
+            <Trophy className="w-5 h-5 sm:w-6 sm:h-6" />
           </div>
-          <div>
-            <h2 className="text-xl font-black text-slate-900 dark:text-slate-100 tracking-tight flex items-center gap-2">
+          <div className="min-w-0">
+            <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100 tracking-tight flex flex-wrap items-center gap-x-2 gap-y-1">
               <span>Student Achievements & Recognitions</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200/80 dark:border-amber-800/80">
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold whitespace-nowrap bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200/80 dark:border-amber-800/80">
                 Official Logs
               </span>
             </h2>
@@ -293,11 +336,11 @@ export default function AchievementsView() {
 
       {/* KPI Metric Summary Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+        <div className="glass-panel p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-center gap-2.5 sm:gap-3 min-w-0">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-50 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
             <Award className="w-5 h-5" />
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
               Total Records
             </p>
@@ -307,25 +350,25 @@ export default function AchievementsView() {
           </div>
         </div>
 
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+        <div className="glass-panel p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-center gap-2.5 sm:gap-3 min-w-0">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
             <Medal className="w-5 h-5" />
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
               Academic Term
             </p>
-            <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
-              {logs[0]?.academic_term || '2026-2027 (Term 1)'}
+            <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate" title={latestTerm || ''}>
+              {latestTerm || '—'}
             </p>
           </div>
         </div>
 
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+        <div className="glass-panel p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-center gap-2.5 sm:gap-3 min-w-0">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
             <CheckCircle2 className="w-5 h-5" />
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
               Status Verification
             </p>
@@ -335,16 +378,16 @@ export default function AchievementsView() {
           </div>
         </div>
 
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-950/80 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+        <div className="glass-panel p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-center gap-2.5 sm:gap-3 min-w-0">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-purple-50 dark:bg-purple-950/80 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
             <Star className="w-5 h-5" />
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
               {isStaff ? 'Honored Cohort' : 'Student Status'}
             </p>
             <p className="text-xs font-bold text-purple-600 dark:text-purple-400 truncate">
-              {isStaff ? (staffStudentFilter === 'all' ? 'All Students' : staffStudentFilter) : (studentProfile?.student_name || 'Enrolled Student')}
+              {isStaff ? (staffStudentFilter === 'all' ? 'All Students' : staffFilterName) : (studentProfile?.student_name || (isGuardian ? 'All Linked Wards' : '—'))}
             </p>
           </div>
         </div>
@@ -352,7 +395,7 @@ export default function AchievementsView() {
 
       {/* Ward Switcher Pill for Guardians */}
       {isGuardian && students && students.length > 1 && (
-        <div className="flex items-center gap-2 p-2 rounded-2xl bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+        <div className="flex flex-wrap items-center gap-2 p-2 rounded-2xl bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
           <span className="text-xs font-bold text-slate-600 dark:text-slate-400 px-2 flex items-center gap-1.5">
             <Users className="w-3.5 h-3.5" />
             <span>Select Ward:</span>
@@ -364,7 +407,7 @@ export default function AchievementsView() {
                 <button
                   key={w.student}
                   onClick={() => selectStudent(w.student)}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                  className={`px-3 py-2 sm:py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
                     isSelected
                       ? 'bg-amber-500 text-white shadow-xs'
                       : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -394,7 +437,7 @@ export default function AchievementsView() {
             <button
               key={tab.id}
               onClick={() => setSelectedTypeFilter(tab.id)}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap shrink-0 ${
                 active
                   ? 'bg-white dark:bg-slate-700 text-amber-600 dark:text-amber-300 shadow-xs'
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -408,7 +451,7 @@ export default function AchievementsView() {
       </div>
 
       {/* Search and Secondary Filter Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white/60 dark:bg-slate-900/60 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-800 backdrop-blur-md">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white/60 dark:bg-slate-900/60 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-800 backdrop-blur-md">
         {/* Search */}
         <div className="relative w-full sm:w-72">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -417,12 +460,12 @@ export default function AchievementsView() {
             placeholder="Search honors, competitions, or students..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+            className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 sm:py-1.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
           />
         </div>
 
         {/* Filters */}
-        <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end flex-wrap">
+        <div className="flex items-center gap-2.5 w-full sm:w-auto justify-start sm:justify-end flex-wrap">
           {/* Staff Student Selector */}
           {isStaff && (
             <div className="flex items-center gap-1.5">
@@ -433,7 +476,7 @@ export default function AchievementsView() {
               <select
                 value={staffStudentFilter}
                 onChange={(e) => setStaffStudentFilter(e.target.value)}
-                className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/30 cursor-pointer max-w-[150px] truncate"
+                className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 py-2 sm:py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/30 cursor-pointer max-w-[150px] truncate"
               >
                 <option value="all">All Students</option>
                 {directoryStudents.map((s) => (
@@ -455,7 +498,7 @@ export default function AchievementsView() {
               <select
                 value={selectedProgramFilter}
                 onChange={(e) => setSelectedProgramFilter(e.target.value)}
-                className="appearance-none bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-3 pr-8 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/30 cursor-pointer"
+                className="appearance-none bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-3 pr-8 py-2 sm:py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/30 cursor-pointer max-w-[180px] sm:max-w-none"
               >
                 <option value="all">All Programs</option>
                 {availablePrograms.map((p) => (
@@ -476,7 +519,7 @@ export default function AchievementsView() {
               <select
                 value={selectedYearFilter}
                 onChange={(e) => setSelectedYearFilter(e.target.value)}
-                className="appearance-none bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-3 pr-8 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/30 cursor-pointer"
+                className="appearance-none bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-3 pr-8 py-2 sm:py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/30 cursor-pointer max-w-[180px] sm:max-w-none"
               >
                 <option value="all">All Years</option>
                 {availableYears.map((y) => (
@@ -495,6 +538,24 @@ export default function AchievementsView() {
           <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
           <p className="text-xs font-semibold text-slate-400">Loading student records...</p>
         </div>
+      ) : loadError ? (
+        <div className="glass-panel p-12 rounded-3xl border border-rose-200/80 dark:border-rose-900/60 text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-rose-50 dark:bg-rose-950/60 text-rose-500 flex items-center justify-center mx-auto shadow-xs">
+            <AlertCircle className="w-7 h-7" />
+          </div>
+          <div className="space-y-1 max-w-sm mx-auto">
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+              Unable to Load Records
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">{loadError}</p>
+          </div>
+          <button
+            onClick={fetchLogs}
+            className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition"
+          >
+            Retry
+          </button>
+        </div>
       ) : filteredLogs.length === 0 ? (
         <div className="glass-panel p-12 rounded-3xl border border-slate-200/80 dark:border-slate-800 text-center space-y-4">
           <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-amber-950/60 text-amber-500 flex items-center justify-center mx-auto shadow-xs">
@@ -505,7 +566,7 @@ export default function AchievementsView() {
               No Milestones Found
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              {searchQuery || selectedTypeFilter !== 'all' || selectedProgramFilter !== 'all'
+              {searchQuery || selectedTypeFilter !== 'all' || selectedProgramFilter !== 'all' || selectedYearFilter !== 'all'
                 ? 'No student logs match your current search filters. Try clearing the filters.'
                 : 'No official student milestones or achievements have been recorded yet.'}
             </p>
@@ -528,28 +589,28 @@ export default function AchievementsView() {
 
                 <div className="space-y-4">
                   {/* Card Header with Badges and Date */}
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
                       <div className={`w-10 h-10 rounded-2xl bg-gradient-to-tr ${badgeMeta.gradient} text-white flex items-center justify-center shadow-md ${badgeMeta.shadow} shrink-0`}>
                         <IconComponent className="w-5 h-5" />
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs font-black text-slate-900 dark:text-slate-100">
+                          <span className="text-xs font-black text-slate-900 dark:text-slate-100 break-words">
                             {item.student_name || 'Student'}
                           </span>
                           <span className={`text-[10px] font-extrabold px-2 py-0.2 rounded-full border ${badgeMeta.badgeClass}`}>
                             {badgeMeta.label}
                           </span>
                         </div>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
-                          {item.student || 'EDU-STU-2026-00001'}
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5 break-all">
+                          {item.student}
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/80 px-2.5 py-1 rounded-xl">
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/80 px-2.5 py-1 rounded-xl">
                         <Calendar className="w-3 h-3 text-slate-400" />
                         <span>{formatDate(item.date)}</span>
                       </div>
@@ -559,7 +620,7 @@ export default function AchievementsView() {
                         <button
                           onClick={() => handleDeleteLog(item.name)}
                           disabled={deletingId === item.name}
-                          className="p-1 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/60 text-slate-400 hover:text-rose-600 transition"
+                          className="p-2 sm:p-1 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/60 text-slate-400 hover:text-rose-600 transition"
                           title="Delete Student Log"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -570,11 +631,13 @@ export default function AchievementsView() {
 
                   {/* Academic Program & Cohort Tags */}
                   <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600 dark:text-slate-300">
-                    <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 font-medium">
-                      Program: <strong className="text-slate-900 dark:text-slate-100">{item.program || 'Standard 5'}</strong>
-                    </span>
+                    {item.program && (
+                      <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 font-medium max-w-full break-words">
+                        Program: <strong className="text-slate-900 dark:text-slate-100">{item.program}</strong>
+                      </span>
+                    )}
                     {item.academic_term && (
-                      <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 font-medium">
+                      <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 font-medium max-w-full break-words">
                         Term: <strong className="text-slate-900 dark:text-slate-100">{item.academic_term}</strong>
                       </span>
                     )}
@@ -582,7 +645,7 @@ export default function AchievementsView() {
 
                   {/* Recognition Description Body */}
                   <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 text-slate-800 dark:text-slate-200 text-xs sm:text-sm leading-relaxed font-normal">
-                    <p>{cleanContent}</p>
+                    <p className="break-words">{cleanContent}</p>
                   </div>
 
                   {/* Certificate Attachments */}
@@ -594,10 +657,10 @@ export default function AchievementsView() {
                           href={att.file_url}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60 text-xs font-bold transition shadow-2xs"
+                          className="inline-flex items-center gap-1.5 max-w-full min-w-0 px-3 py-2 sm:py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60 text-xs font-bold transition shadow-2xs"
                         >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                          <span>{att.file_name || 'Certificate Credential'}</span>
+                          <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate" title={att.file_name || 'Certificate Credential'}>{att.file_name || 'Certificate Credential'}</span>
                         </a>
                       ))}
                     </div>
@@ -606,7 +669,7 @@ export default function AchievementsView() {
 
                 {/* Card Footer with Verification Strip and Action */}
                 <div className="pt-4 mt-4 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] gap-2">
-                  <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold truncate">
+                  <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold truncate min-w-0" title={`Verified Record (${item.name})`}>
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                     <span className="truncate">Verified Record ({item.name})</span>
                   </div>
@@ -614,7 +677,7 @@ export default function AchievementsView() {
                   {/* Official Certificate Preview Button */}
                   <button
                     onClick={() => setSelectedCertificate(item)}
-                    className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/80 hover:bg-amber-100 text-amber-700 dark:text-amber-300 font-bold text-xs transition shrink-0"
+                    className="flex items-center gap-1.5 px-3 py-2 sm:py-1 rounded-xl bg-amber-50 dark:bg-amber-950/80 hover:bg-amber-100 text-amber-700 dark:text-amber-300 font-bold text-xs transition shrink-0"
                   >
                     <Trophy className="w-3.5 h-3.5" />
                     <span>View Certificate</span>
@@ -628,29 +691,30 @@ export default function AchievementsView() {
 
       {/* Official Certificate Award Modal */}
       {selectedCertificate && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-amber-500/30 rounded-3xl shadow-2xl max-w-2xl w-full p-6 sm:p-8 space-y-6 relative overflow-hidden my-8">
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-amber-500/30 rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-x-hidden overflow-y-auto print:max-h-none print:overflow-hidden p-4 sm:p-8 space-y-4 sm:space-y-6 relative my-auto">
             {/* Ambient Background Seals */}
             <div className="absolute -top-12 -right-12 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
             <div className="absolute -bottom-12 -left-12 w-48 h-48 bg-orange-500/10 rounded-full blur-3xl pointer-events-none" />
 
             {/* Modal Controls Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 print:hidden">
-              <span className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4" />
-                <span>Official Institutional Credential</span>
+            <div className="sticky top-0 z-10 -mx-4 sm:-mx-8 px-4 sm:px-8 bg-white dark:bg-slate-900 flex items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800 print:hidden">
+              <span className="min-w-0 text-[11px] sm:text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 shrink-0" />
+                <span className="truncate">Official Institutional Credential</span>
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={handlePrintCertificate}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-bold transition"
+                  className="flex items-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-bold transition"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Print Certificate</span>
+                  <span className="sm:hidden">Print</span>
+                  <span className="hidden sm:inline">Print Certificate</span>
                 </button>
                 <button
                   onClick={() => setSelectedCertificate(null)}
-                  className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 flex items-center justify-center transition"
+                  className="w-9 h-9 sm:w-8 sm:h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 flex items-center justify-center transition"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -660,49 +724,49 @@ export default function AchievementsView() {
             {/* Printable Certificate Frame */}
             <div 
               ref={certificatePrintRef}
-              className="p-8 sm:p-12 rounded-2xl border-4 border-double border-amber-500/60 bg-gradient-to-b from-amber-50/40 via-white to-amber-50/20 dark:from-slate-900 dark:via-slate-900/90 dark:to-slate-900/60 text-center space-y-6 relative shadow-inner"
+              className="p-4 sm:p-12 print:p-12 rounded-2xl border-4 border-double border-amber-500/60 bg-gradient-to-b from-amber-50/40 via-white to-amber-50/20 dark:from-slate-900 dark:via-slate-900/90 dark:to-slate-900/60 text-center space-y-4 sm:space-y-6 print:space-y-6 relative shadow-inner"
             >
-              <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center mx-auto shadow-lg shadow-amber-500/30">
-                <Trophy className="w-8 h-8" />
+              <div className="w-12 h-12 sm:w-16 sm:h-16 print:w-16 print:h-16 rounded-full bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center mx-auto shadow-lg shadow-amber-500/30">
+                <Trophy className="w-6 h-6 sm:w-8 sm:h-8" />
               </div>
 
               <div className="space-y-1">
-                <h4 className="text-xs font-mono font-bold uppercase tracking-widest text-amber-600 dark:text-amber-400">
-                  Institution of Frappe Education
+                <h4 className="text-xs font-mono font-bold uppercase tracking-wider sm:tracking-widest text-amber-600 dark:text-amber-400 break-words">
+                  {schoolName || 'Official Institutional Record'}
                 </h4>
-                <h3 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
+                <h3 className="text-xl sm:text-3xl print:text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
                   Certificate of Recognition
                 </h3>
                 <p className="text-xs text-slate-500 italic">This is officially presented to</p>
               </div>
 
               <div className="py-2 border-b-2 border-slate-300 dark:border-slate-700 max-w-md mx-auto">
-                <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tight text-amber-700 dark:text-amber-300">
-                  {selectedCertificate.student_name || 'Rahul Sharma'}
+                <h2 className="text-xl sm:text-3xl print:text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tight text-amber-700 dark:text-amber-300 break-words">
+                  {selectedCertificate.student_name || selectedCertificate.student}
                 </h2>
-                <p className="text-[11px] font-mono text-slate-400 mt-0.5">
+                <p className="text-[11px] font-mono text-slate-400 mt-0.5 break-all">
                   Student ID: {selectedCertificate.student}
                 </p>
               </div>
 
               <div className="max-w-lg mx-auto text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
-                <p>{renderLogContent(selectedCertificate.log)}</p>
+                <p className="break-words">{renderLogContent(selectedCertificate.log)}</p>
               </div>
 
-              <div className="pt-8 flex items-center justify-between text-left text-xs border-t border-slate-200 dark:border-slate-800">
-                <div>
+              <div className="pt-6 sm:pt-8 print:pt-8 flex items-center justify-between gap-3 text-left text-xs border-t border-slate-200 dark:border-slate-800">
+                <div className="min-w-0 flex-1">
                   <span className="text-[10px] text-slate-400 uppercase font-bold block">Academic Program</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">
-                    {selectedCertificate.program || 'Standard 5'} ({selectedCertificate.academic_year || '2026-2027'})
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 break-words">
+                    {[selectedCertificate.program, selectedCertificate.academic_year && `(${selectedCertificate.academic_year})`].filter(Boolean).join(' ') || '—'}
                   </span>
                 </div>
-                <div className="text-center">
-                  <div className="w-12 h-12 rounded-full border-2 border-amber-500 text-amber-500 flex items-center justify-center mx-auto">
-                    <ShieldCheck className="w-6 h-6" />
+                <div className="text-center shrink-0">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 print:w-12 print:h-12 rounded-full border-2 border-amber-500 text-amber-500 flex items-center justify-center mx-auto">
+                    <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6" />
                   </div>
-                  <span className="text-[9px] uppercase font-bold text-slate-400 block mt-1">Official Seal</span>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block mt-1">Official Seal</span>
                 </div>
-                <div className="text-right">
+                <div className="text-right min-w-0 flex-1">
                   <span className="text-[10px] text-slate-400 uppercase font-bold block">Date Conferred</span>
                   <span className="font-semibold text-slate-800 dark:text-slate-200">
                     {formatDate(selectedCertificate.date)}
@@ -718,12 +782,12 @@ export default function AchievementsView() {
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-lg max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl">
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0">
                   <Award className="w-5 h-5" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
                     Record Student Milestone
                   </h3>
@@ -732,7 +796,7 @@ export default function AchievementsView() {
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 flex items-center justify-center transition"
+                className="w-9 h-9 sm:w-8 sm:h-8 shrink-0 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 flex items-center justify-center transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -761,10 +825,13 @@ export default function AchievementsView() {
                   </label>
                   <select
                     value={formData.student}
-                    onChange={(e) => setFormData({ ...formData, student: e.target.value })}
+                    onChange={(e) => handleFormStudentChange(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
                     required
                   >
+                    {directoryStudents.length === 0 && (
+                      <option value="">No students found</option>
+                    )}
                     {directoryStudents.map((s) => (
                       <option key={s.name} value={s.name}>
                         {s.student_name} ({s.name})
@@ -774,7 +841,7 @@ export default function AchievementsView() {
                 </div>
 
                 {/* Log Type & Program */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                       Category Type
@@ -800,14 +867,16 @@ export default function AchievementsView() {
                       onChange={(e) => setFormData({ ...formData, program: e.target.value })}
                       className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 dark:text-slate-100"
                     >
-                      <option value="Standard 5">Standard 5</option>
-                      <option value="Standard 6">Standard 6</option>
+                      <option value="">Not specified</option>
+                      {enrollmentMeta.programs.map((p) => (
+                        <option key={p.name} value={p.name}>{p.program_name || p.name}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
 
                 {/* Date & Term */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                       Conferred Date
@@ -826,13 +895,13 @@ export default function AchievementsView() {
                     </label>
                     <select
                       value={formData.academic_term}
-                      onChange={(e) => setFormData({ ...formData, academic_term: e.target.value })}
+                      onChange={(e) => handleFormTermChange(e.target.value)}
                       className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 dark:text-slate-100"
                     >
-                      <option value="2026-2027 (Term 1)">2026-2027 (Term 1)</option>
-                      <option value="2026-2027 (Term 2)">2026-2027 (Term 2)</option>
-                      <option value="2027-2028 (Term 1)">2027-2028 (Term 1)</option>
-                      <option value="2027-2028 (Term 2)">2027-2028 (Term 2)</option>
+                      <option value="">Not specified</option>
+                      {enrollmentMeta.academic_terms.map((t) => (
+                        <option key={t.name} value={t.name}>{t.name}</option>
+                      ))}
                     </select>
                   </div>
                 </div>

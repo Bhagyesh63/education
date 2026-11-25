@@ -15,6 +15,22 @@ def after_install():
     create_permissions(get_permissions())
 
 
+# def setup_fixtures():
+#     records = [
+#         # Party Type Records
+#         {
+#             "doctype": "Party Type",
+#             "party_type": "Student",
+#             "account_type": "Receivable",
+#         },
+#         # Item Group Records
+#         {"doctype": "Item Group", "item_group_name": "Fee Component"},
+#         # Customer Group Records
+#         {"doctype": "Customer Group", "customer_group_name": "Student"},
+#     ]
+#     make_records(records)
+
+
 def setup_fixtures():
     make_records(
         [
@@ -84,7 +100,7 @@ def create_invoice_permissions():
     doctype = "Sales Invoice"
     role = "Student"
     permlevel = 0
-    ptype = ["read", "write", "print"]
+    ptype = ["read", "print"]  # students may view/print their invoices, never edit them
 
     for p in ptype:
         # update permissions
@@ -97,7 +113,7 @@ def get_permissions():
             "doctype": "Sales Invoice",
             "role": "Student",
             "permlevel": 0,
-            "ptype": ["read", "write", "print"],
+            "ptype": ["read", "print"],
         },
         {
             "doctype": "User",

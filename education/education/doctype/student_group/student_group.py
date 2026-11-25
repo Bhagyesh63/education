@@ -111,6 +111,7 @@ def get_students(
     student_category: str | None = None,
     course: str | None = None,
 ):
+    frappe.has_permission("Student Group", "read", throw=True)
     enrolled_students = get_program_enrollment(
         academic_year, academic_term, program, batch, student_category, course
     )
@@ -172,6 +173,7 @@ def get_program_enrollment(
 def fetch_students(
     doctype: str, txt: str, searchfield: str, start: int, page_len: int, filters: dict
 ):
+    frappe.has_permission("Student Group", "read", throw=True)
     if filters.get("group_based_on") != "Activity":
         enrolled_students = get_program_enrollment(
             filters.get("academic_year"),
