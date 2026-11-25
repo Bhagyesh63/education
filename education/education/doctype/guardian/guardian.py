@@ -39,7 +39,7 @@ class Guardian(Document):
         self.students = []
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def invite_guardian(guardian: str):
     frappe.has_permission("Guardian", "write", throw=True)
     guardian_doc = frappe.get_doc("Guardian", guardian)

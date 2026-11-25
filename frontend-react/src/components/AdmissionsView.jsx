@@ -28,7 +28,8 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../api/frappeClient';
 
 export default function AdmissionsView() {
-  const { isStaff, isAdmin, programs: authPrograms } = useAuth();
+  const { isStaff, isAdmin } = useAuth();
+  const canManage = isStaff || isAdmin;
 
   const [activeTab, setActiveTab] = useState('applicants'); // 'applicants' | 'drives'
   const [applicants, setApplicants] = useState([]);
@@ -39,6 +40,8 @@ export default function AdmissionsView() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [programFilter, setProgramFilter] = useState('all');
+  const [driveFilter, setDriveFilter] = useState('all');
+  const [loadError, setLoadError] = useState(null);
 
   // Modal states
   const [selectedApplicant, setSelectedApplicant] = useState(null);
@@ -87,6 +90,7 @@ export default function AdmissionsView() {
 
   const loadAllData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const getApps = typeof api.getStudentApplicants === 'function' ? api.getStudentApplicants() : Promise.resolve([]);
       const getDrives = typeof api.getAdmissionsList === 'function' ? api.getAdmissionsList() : Promise.resolve([]);
@@ -98,7 +102,11 @@ export default function AdmissionsView() {
       const getProgs = typeof api.getAllPrograms === 'function' ? api.getAllPrograms() : Promise.resolve([]);
 
       const [appsData, drivesData, yearsData, progsData] = await Promise.all([
-        getApps.catch(e => { console.warn('Failed to load applicants:', e); return []; }),
+        getApps.catch(e => {
+          console.warn('Failed to load applicants:', e);
+          setLoadError(e.message || 'Failed to load applicants.');
+          return [];
+        }),
         getDrives.catch(e => { console.warn('Failed to load drives:', e); return []; }),
         getYears.catch(e => { console.warn('Failed to load academic years:', e); return []; }),
         getProgs.catch(e => { console.warn('Failed to load programs:', e); return []; }),
@@ -148,13 +156,14 @@ export default function AdmissionsView() {
     return applicants.filter(app => {
       const matchesStatus = statusFilter === 'all' || app.application_status === statusFilter;
       const matchesProg = programFilter === 'all' || app.program === programFilter;
+      const matchesDrive = driveFilter === 'all' || app.student_admission === driveFilter;
       const matchesSearch = !searchQuery || 
         (app.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
         (app.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
         (app.student_email_id || '').toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesStatus && matchesProg && matchesSearch;
+      return matchesStatus && matchesProg && matchesDrive && matchesSearch;
     });
-  }, [applicants, statusFilter, programFilter, searchQuery]);
+  }, [applicants, statusFilter, programFilter, driveFilter, searchQuery]);
 
   // Metric counts
   const metrics = useMemo(() => {
@@ -170,12 +179,13 @@ export default function AdmissionsView() {
   const handleOpenDetail = async (applicantName) => {
     setShowDetailModal(true);
     setDetailLoading(true);
+    setSelectedApplicant(null);
     try {
       const details = await api.getApplicantDetails(applicantName);
       setSelectedApplicant(details);
     } catch (err) {
       console.error('Error fetching applicant details:', err);
-      showNotification('Failed to load applicant dossier', 'error');
+      showNotification(err.message || 'Failed to load applicant dossier', 'error');
     } finally {
       setDetailLoading(false);
     }
@@ -306,51 +316,53 @@ export default function AdmissionsView() {
     <div className="space-y-6 max-w-full overflow-hidden">
       {/* Toast Notification Banner */}
       {feedback && (
-        <div className={`p-4 rounded-2xl flex items-center justify-between text-xs font-semibold shadow-lg transition-all animate-in fade-in duration-200 ${
+        <div className={`p-4 rounded-2xl flex items-center justify-between gap-3 text-xs font-semibold shadow-lg transition-all animate-in fade-in duration-200 ${
           feedback.type === 'error'
             ? 'bg-rose-500 text-white'
             : 'bg-emerald-600 text-white shadow-emerald-500/20'
         }`}>
-          <div className="flex items-center gap-2">
-            {feedback.type === 'error' ? <AlertCircle className="w-4 h-4" /> : <Check className="w-4 h-4" />}
-            <span>{feedback.msg}</span>
+          <div className="flex items-center gap-2 min-w-0">
+            {feedback.type === 'error' ? <AlertCircle className="w-4 h-4 shrink-0" /> : <Check className="w-4 h-4 shrink-0" />}
+            <span className="min-w-0 break-words">{feedback.msg}</span>
           </div>
-          <button onClick={() => setFeedback(null)} className="p-1 hover:bg-white/20 rounded-lg">
+          <button onClick={() => setFeedback(null)} className="p-2 sm:p-1 hover:bg-white/20 rounded-lg shrink-0">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
 
       {/* Header Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1 basis-[260px]">
           <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl gradient-brand flex items-center justify-center text-white shadow-glow">
+            <div className="w-9 h-9 rounded-xl gradient-brand flex items-center justify-center text-white shadow-glow shrink-0">
               <UserPlus className="w-5 h-5" />
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight min-w-0 break-words">
               Admissions & Applicant Intake
             </h1>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Manage prospective student applications, admission drives, review dossiers, and enroll verified candidates.
+            {canManage
+              ? 'Manage prospective student applications, admission drives, review dossiers, and enroll verified candidates.'
+              : 'Track the status of your submitted applications and browse open admission drives.'}
           </p>
         </div>
 
         {/* Action Buttons for Staff */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           <button
             onClick={() => setShowNewAppModal(true)}
-            className="py-2.5 px-4 rounded-xl gradient-brand text-white font-bold text-xs shadow-md shadow-brand-500/20 hover:opacity-95 active:scale-95 transition flex items-center gap-1.5"
+            className="flex-1 sm:flex-none justify-center whitespace-nowrap py-2.5 px-4 rounded-xl gradient-brand text-white font-bold text-xs shadow-md shadow-brand-500/20 hover:opacity-95 active:scale-95 transition flex items-center gap-1.5"
           >
             <Plus className="w-4 h-4" />
             <span>New Application</span>
           </button>
 
-          {(isStaff || isAdmin) && (
+          {canManage && (
             <button
               onClick={() => setShowNewDriveModal(true)}
-              className="py-2.5 px-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs hover:bg-slate-50 dark:hover:bg-slate-800 transition flex items-center gap-1.5 shadow-xs"
+              className="flex-1 sm:flex-none justify-center whitespace-nowrap py-2.5 px-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs hover:bg-slate-50 dark:hover:bg-slate-800 transition flex items-center gap-1.5 shadow-xs"
             >
               <School className="w-4 h-4 text-brand-600 dark:text-brand-400" />
               <span>Create Admission Drive</span>
@@ -361,52 +373,52 @@ export default function AdmissionsView() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 sm:gap-4">
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 flex items-center justify-between shadow-xs">
-          <div>
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Total Inquiries</p>
-            <p className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-0.5">{metrics.total}</p>
+        <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-2 shadow-xs">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">{canManage ? 'Total Inquiries' : 'My Applications'}</p>
+            <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 mt-0.5">{metrics.total}</p>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300">
             <UserPlus className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 flex items-center justify-between shadow-xs">
-          <div>
+        <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-2 shadow-xs">
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">Pending Review</p>
-            <p className="text-2xl font-black text-blue-700 dark:text-blue-300 mt-0.5">{metrics.applied}</p>
+            <p className="text-xl sm:text-2xl font-black text-blue-700 dark:text-blue-300 mt-0.5">{metrics.applied}</p>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/80 flex items-center justify-center text-blue-600 dark:text-blue-400">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-xl bg-blue-50 dark:bg-blue-950/80 flex items-center justify-center text-blue-600 dark:text-blue-400">
             <Clock className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 flex items-center justify-between shadow-xs">
-          <div>
+        <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-2 shadow-xs">
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Approved</p>
-            <p className="text-2xl font-black text-emerald-700 dark:text-emerald-300 mt-0.5">{metrics.approved}</p>
+            <p className="text-xl sm:text-2xl font-black text-emerald-700 dark:text-emerald-300 mt-0.5">{metrics.approved}</p>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/80 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-xl bg-emerald-50 dark:bg-emerald-950/80 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 flex items-center justify-between shadow-xs">
-          <div>
+        <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-2 shadow-xs">
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wider">Admitted Students</p>
-            <p className="text-2xl font-black text-purple-700 dark:text-purple-300 mt-0.5">{metrics.admitted}</p>
+            <p className="text-xl sm:text-2xl font-black text-purple-700 dark:text-purple-300 mt-0.5">{metrics.admitted}</p>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-950/80 flex items-center justify-center text-purple-600 dark:text-purple-400">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-xl bg-purple-50 dark:bg-purple-950/80 flex items-center justify-center text-purple-600 dark:text-purple-400">
             <GraduationCap className="w-5 h-5" />
           </div>
         </div>
       </div>
 
       {/* Tabs Switcher */}
-      <div className="flex items-center gap-2 border-b border-slate-200/80 dark:border-slate-800 pb-2">
+      <div className="flex items-center gap-2 border-b border-slate-200/80 dark:border-slate-800 pb-2 overflow-x-auto">
         <button
           onClick={() => setActiveTab('applicants')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+          className={`py-2 px-3 sm:px-4 rounded-xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'applicants'
               ? 'bg-brand-50 dark:bg-brand-950/60 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-brand-800 shadow-xs'
               : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -418,7 +430,7 @@ export default function AdmissionsView() {
 
         <button
           onClick={() => setActiveTab('drives')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+          className={`py-2 px-3 sm:px-4 rounded-xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'drives'
               ? 'bg-brand-50 dark:bg-brand-950/60 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-brand-800 shadow-xs'
               : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -435,7 +447,7 @@ export default function AdmissionsView() {
           {/* Controls bar */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
             {/* Search */}
-            <div className="relative flex-1 min-w-[200px]">
+            <div className="relative flex-1 min-w-0 sm:min-w-[200px]">
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
@@ -452,7 +464,7 @@ export default function AdmissionsView() {
                 <button
                   key={st}
                   onClick={() => setStatusFilter(st)}
-                  className={`py-1.5 px-3 rounded-lg text-xs font-semibold capitalize transition ${
+                  className={`py-2 sm:py-1.5 px-3 rounded-lg text-xs font-semibold capitalize transition ${
                     statusFilter === st
                       ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
                       : 'bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -462,11 +474,23 @@ export default function AdmissionsView() {
                 </button>
               ))}
 
+              {/* Filter by Admission Drive */}
+              {driveFilter !== 'all' && (
+                <button
+                  onClick={() => setDriveFilter('all')}
+                  className="py-2 sm:py-1.5 px-3 rounded-lg text-xs font-semibold max-w-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1"
+                  title="Clear admission drive filter"
+                >
+                  <span className="truncate max-w-[140px]">{admissionsList.find((d) => d.name === driveFilter)?.title || driveFilter}</span>
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+
               {/* Filter by Program */}
               <select
                 value={programFilter}
                 onChange={(e) => setProgramFilter(e.target.value)}
-                className="py-1.5 px-3 rounded-lg text-xs bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-medium focus:outline-hidden"
+                className="py-2 sm:py-1.5 px-3 rounded-lg text-xs max-w-full bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-medium focus:outline-hidden"
               >
                 <option value="all">All Programs</option>
                 {dbPrograms.map((p) => (
@@ -482,11 +506,27 @@ export default function AdmissionsView() {
               <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
               Loading applicants from database...
             </div>
+          ) : loadError ? (
+            <div className="glass-panel p-12 text-center text-xs text-slate-400 rounded-3xl border border-rose-200/70 dark:border-rose-900/60 space-y-2">
+              <AlertCircle className="w-10 h-10 text-rose-400 mx-auto mb-2" />
+              <p className="font-bold text-slate-700 dark:text-slate-300 text-sm">Unable to load applications</p>
+              <p className="text-slate-500">{loadError}</p>
+              <button
+                onClick={loadAllData}
+                className="mt-2 py-1.5 px-3 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
+              >
+                Retry
+              </button>
+            </div>
           ) : filteredApplicants.length === 0 ? (
             <div className="glass-panel p-12 text-center text-xs text-slate-400 rounded-3xl border border-slate-200/70 dark:border-slate-800 space-y-2">
               <UserPlus className="w-10 h-10 text-slate-300 dark:text-slate-700 mx-auto mb-2" />
               <p className="font-bold text-slate-700 dark:text-slate-300 text-sm">No applications found</p>
-              <p className="text-slate-500">There are no applicant submissions matching the current filters.</p>
+              <p className="text-slate-500">
+                {applicants.length === 0
+                  ? (canManage ? 'No student applications have been submitted yet.' : 'You have not submitted any applications yet.')
+                  : 'There are no applicant submissions matching the current filters.'}
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -499,10 +539,10 @@ export default function AdmissionsView() {
                     {/* Header */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 font-semibold uppercase">
+                        <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 font-semibold uppercase break-all">
                           {app.name}
                         </span>
-                        <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100 truncate">
+                        <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100 truncate" title={app.title || `${app.first_name} ${app.last_name || ''}`}>
                           {app.title || `${app.first_name} ${app.last_name || ''}`}
                         </h3>
                       </div>
@@ -513,45 +553,45 @@ export default function AdmissionsView() {
 
                     {/* Details */}
                     <div className="mt-3 space-y-1.5 text-xs text-slate-600 dark:text-slate-400">
-                      <div className="flex items-center gap-1.5 truncate">
+                      <div className="flex items-center gap-1.5 min-w-0">
                         <GraduationCap className="w-3.5 h-3.5 text-brand-500 shrink-0" />
-                        <span className="font-semibold text-slate-800 dark:text-slate-200">{app.program}</span>
-                        {app.academic_year && <span className="text-slate-400">({app.academic_year})</span>}
+                        <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">{app.program}</span>
+                        {app.academic_year && <span className="text-slate-400 shrink-0">({app.academic_year})</span>}
                       </div>
 
                       {app.student_email_id && (
-                        <div className="flex items-center gap-1.5 truncate text-[11px]">
+                        <div className="flex items-center gap-1.5 min-w-0 text-[11px]">
                           <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span className="truncate">{app.student_email_id}</span>
+                          <span className="truncate" title={app.student_email_id}>{app.student_email_id}</span>
                         </div>
                       )}
 
                       {app.student_admission && (
-                        <div className="flex items-center gap-1.5 truncate text-[11px]">
+                        <div className="flex items-center gap-1.5 min-w-0 text-[11px]">
                           <School className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span className="truncate">{app.student_admission}</span>
+                          <span className="truncate" title={app.student_admission}>{app.student_admission}</span>
                         </div>
                       )}
                     </div>
                   </div>
 
                   {/* Actions Footer */}
-                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
                     <button
                       onClick={() => handleOpenDetail(app.name)}
-                      className="py-1.5 px-3 rounded-lg text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition flex items-center gap-1"
+                      className="py-2 sm:py-1.5 px-3 rounded-lg text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition flex items-center gap-1"
                     >
                       <Eye className="w-3.5 h-3.5" />
                       <span>Review</span>
                     </button>
 
-                    <div className="flex items-center gap-1.5">
-                      {app.application_status === 'Applied' && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {canManage && app.application_status === 'Applied' && (
                         <>
                           <button
                             disabled={actionLoadingId === app.name}
                             onClick={() => handleUpdateStatus(app.name, 'Approved')}
-                            className="py-1.5 px-2.5 rounded-lg text-xs font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 transition"
+                            className="py-2 sm:py-1.5 px-2.5 rounded-lg text-xs font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 transition"
                             title="Approve Application"
                           >
                             Approve
@@ -559,7 +599,7 @@ export default function AdmissionsView() {
                           <button
                             disabled={actionLoadingId === app.name}
                             onClick={() => handleUpdateStatus(app.name, 'Rejected')}
-                            className="py-1.5 px-2 rounded-lg text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
+                            className="py-2 sm:py-1.5 px-2 rounded-lg text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
                             title="Reject"
                           >
                             Reject
@@ -567,11 +607,11 @@ export default function AdmissionsView() {
                         </>
                       )}
 
-                      {app.application_status === 'Approved' && (
+                      {canManage && app.application_status === 'Approved' && (
                         <button
                           disabled={actionLoadingId === app.name}
                           onClick={() => handleAdmitAndEnroll(app.name)}
-                          className="py-1.5 px-3 rounded-lg text-xs font-bold gradient-brand text-white shadow-xs hover:opacity-90 active:scale-95 transition flex items-center gap-1"
+                          className="py-2 sm:py-1.5 px-3 rounded-lg text-xs font-bold gradient-brand text-white shadow-xs hover:opacity-90 active:scale-95 transition flex items-center gap-1 whitespace-nowrap"
                         >
                           <UserCheck className="w-3.5 h-3.5" />
                           <span>Admit & Enroll</span>
@@ -596,19 +636,33 @@ export default function AdmissionsView() {
       {/* Tab 2: Admission Drives (Student Admission) */}
       {activeTab === 'drives' && (
         <div className="space-y-4">
+          {loading ? (
+            <div className="glass-panel p-12 text-center text-xs text-slate-400 rounded-3xl">
+              <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              Loading admission drives...
+            </div>
+          ) : admissionsList.length === 0 && (
+            <div className="glass-panel p-12 text-center text-xs text-slate-400 rounded-3xl border border-slate-200/70 dark:border-slate-800 space-y-2">
+              <School className="w-10 h-10 text-slate-300 dark:text-slate-700 mx-auto mb-2" />
+              <p className="font-bold text-slate-700 dark:text-slate-300 text-sm">No admission drives</p>
+              <p className="text-slate-500">
+                {canManage ? 'Create an admission drive to start accepting applications.' : 'There are no open admission drives at the moment.'}
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {admissionsList.map((drive) => (
+            {!loading && admissionsList.map((drive) => (
               <div
                 key={drive.name}
                 className="glass-panel p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between space-y-4"
               >
                 <div>
                   <div className="flex items-start justify-between gap-2">
-                    <div>
+                    <div className="min-w-0">
                       <span className="text-[10px] font-mono text-slate-400 uppercase font-semibold">
                         Drive Campaign
                       </span>
-                      <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">
+                      <h3 className="font-bold text-base text-slate-900 dark:text-slate-100 break-words">
                         {drive.title}
                       </h3>
                       <p className="text-xs text-brand-600 dark:text-brand-400 font-semibold mt-0.5">
@@ -616,7 +670,7 @@ export default function AdmissionsView() {
                       </p>
                     </div>
 
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
                       drive.published
                         ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200'
                         : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border-slate-200'
@@ -666,17 +720,24 @@ export default function AdmissionsView() {
                   )}
                 </div>
 
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs text-slate-500">
-                    <strong className="text-slate-900 dark:text-slate-100">{drive.applicant_count || 0}</strong> applicants received
+                    {drive.applicant_count != null ? (
+                      <>
+                        <strong className="text-slate-900 dark:text-slate-100">{drive.applicant_count}</strong> applicants received
+                      </>
+                    ) : (
+                      drive.enable_admission_application ? 'Accepting applications' : 'Applications closed'
+                    )}
                   </span>
 
                   <button
                     onClick={() => {
                       setStatusFilter('all');
+                      setDriveFilter(drive.name);
                       setActiveTab('applicants');
                     }}
-                    className="text-xs font-bold text-brand-600 dark:text-brand-400 hover:text-brand-700 flex items-center gap-1 transition"
+                    className="py-2 sm:py-0 text-xs font-bold text-brand-600 dark:text-brand-400 hover:text-brand-700 flex items-center gap-1 transition whitespace-nowrap"
                   >
                     <span>View Applicants</span>
                     <ArrowRight className="w-3 h-3" />
@@ -690,20 +751,20 @@ export default function AdmissionsView() {
 
       {/* Applicant Dossier Review Modal */}
       {showDetailModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="glass-panel max-w-2xl w-full rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <div>
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+          <div className="glass-panel max-w-2xl w-full max-h-[90vh] flex flex-col overflow-y-auto rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-2xl animate-in fade-in zoom-in-95">
+            <div className="p-4 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
+              <div className="min-w-0">
                 <span className="text-[10px] font-mono font-semibold text-slate-400 uppercase">
                   Application Dossier
                 </span>
-                <h3 className="font-black text-lg text-slate-900 dark:text-slate-100">
+                <h3 className="font-black text-base sm:text-lg text-slate-900 dark:text-slate-100 break-words">
                   {selectedApplicant?.title || selectedApplicant?.name || 'Applicant Details'}
                 </h3>
               </div>
               <button
                 onClick={() => setShowDetailModal(false)}
-                className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400"
+                className="w-9 h-9 sm:w-8 sm:h-8 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -715,16 +776,16 @@ export default function AdmissionsView() {
                 Loading dossier...
               </div>
             ) : selectedApplicant ? (
-              <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+              <div className="p-4 sm:p-6 space-y-5 flex-1 min-h-0 overflow-y-auto">
                 {/* Status Bar */}
-                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/60 flex items-center justify-between">
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/60 flex items-center justify-between gap-3">
                   <div>
                     <span className="text-[10px] uppercase font-bold text-slate-400">Application Status</span>
                     <p className="font-black text-sm text-slate-900 dark:text-slate-100 mt-0.5">
                       {selectedApplicant.application_status}
                     </p>
                   </div>
-                  <span className={`text-xs font-bold px-3 py-1 rounded-full border ${getStatusBadge(selectedApplicant.application_status)}`}>
+                  <span className={`text-xs font-bold px-3 py-1 rounded-full border shrink-0 ${getStatusBadge(selectedApplicant.application_status)}`}>
                     {selectedApplicant.application_status}
                   </span>
                 </div>
@@ -738,7 +799,7 @@ export default function AdmissionsView() {
                     </h4>
                     <div>
                       <span className="text-[10px] text-slate-400 uppercase font-semibold">Target Program:</span>
-                      <p className="font-bold text-slate-800 dark:text-slate-200">{selectedApplicant.program}</p>
+                      <p className="font-bold text-slate-800 dark:text-slate-200 break-words">{selectedApplicant.program}</p>
                     </div>
                     <div>
                       <span className="text-[10px] text-slate-400 uppercase font-semibold">Academic Year:</span>
@@ -746,7 +807,7 @@ export default function AdmissionsView() {
                     </div>
                     <div>
                       <span className="text-[10px] text-slate-400 uppercase font-semibold">Admission Drive:</span>
-                      <p className="font-bold text-slate-800 dark:text-slate-200">{selectedApplicant.student_admission || 'Direct Admission'}</p>
+                      <p className="font-bold text-slate-800 dark:text-slate-200 break-words">{selectedApplicant.student_admission || 'Direct Admission'}</p>
                     </div>
                   </div>
 
@@ -757,7 +818,7 @@ export default function AdmissionsView() {
                     </h4>
                     <div>
                       <span className="text-[10px] text-slate-400 uppercase font-semibold">Email Address:</span>
-                      <p className="font-bold text-slate-800 dark:text-slate-200">{selectedApplicant.student_email_id || 'Not provided'}</p>
+                      <p className="font-bold text-slate-800 dark:text-slate-200 break-all">{selectedApplicant.student_email_id || 'Not provided'}</p>
                     </div>
                     <div>
                       <span className="text-[10px] text-slate-400 uppercase font-semibold">Date of Birth & Gender:</span>
@@ -776,22 +837,23 @@ export default function AdmissionsView() {
 
                 {/* Enrolled Student Notice */}
                 {selectedApplicant.enrolled_student && (
-                  <div className="p-4 rounded-2xl bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 flex items-center justify-between text-xs">
-                    <div>
+                  <div className="p-4 rounded-2xl bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 flex items-center justify-between gap-3 text-xs">
+                    <div className="min-w-0">
                       <span className="font-bold text-purple-900 dark:text-purple-200">Official Student Record Created</span>
-                      <p className="text-purple-700 dark:text-purple-300 mt-0.5">
+                      <p className="text-purple-700 dark:text-purple-300 mt-0.5 break-words">
                         Linked ID: <strong>{selectedApplicant.enrolled_student.name}</strong> ({selectedApplicant.enrolled_student.student_name})
                       </p>
                     </div>
-                    <span className="px-2.5 py-1 rounded-lg bg-purple-600 text-white font-bold text-[10px]">
+                    <span className="px-2.5 py-1 rounded-lg bg-purple-600 text-white font-bold text-[10px] shrink-0">
                       Enrolled
                     </span>
                   </div>
                 )}
 
-                {/* Actions Footer */}
-                <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
+                {/* Actions Footer (staff only) */}
+                {canManage && (
+                <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
                     {selectedApplicant.application_status !== 'Approved' && selectedApplicant.application_status !== 'Admitted' && (
                       <button
                         onClick={() => handleUpdateStatus(selectedApplicant.name, 'Approved')}
@@ -814,39 +876,46 @@ export default function AdmissionsView() {
                   {selectedApplicant.application_status === 'Approved' && (
                     <button
                       onClick={() => handleAdmitAndEnroll(selectedApplicant.name)}
-                      className="py-2.5 px-5 rounded-xl gradient-brand text-white font-black text-xs shadow-md shadow-brand-500/20 hover:opacity-90 active:scale-95 transition flex items-center gap-1.5"
+                      className="py-2.5 px-5 rounded-xl gradient-brand text-white font-black text-xs shadow-md shadow-brand-500/20 hover:opacity-90 active:scale-95 transition flex items-center justify-center gap-1.5"
                     >
                       <UserCheck className="w-4 h-4" />
                       <span>Admit & Enroll Student</span>
                     </button>
                   )}
                 </div>
+                )}
               </div>
-            ) : null}
+            ) : (
+              <div className="p-12 text-center text-xs text-slate-400 space-y-2">
+                <AlertCircle className="w-8 h-8 text-rose-400 mx-auto" />
+                <p className="font-bold text-slate-700 dark:text-slate-300 text-sm">Application dossier unavailable</p>
+                <p className="text-slate-500">This application could not be loaded or you do not have access to it.</p>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* New Application Modal */}
       {showNewAppModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="glass-panel max-w-xl w-full rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <div>
-                <h3 className="font-black text-lg text-slate-900 dark:text-slate-100">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+          <div className="glass-panel max-w-xl w-full max-h-[90vh] flex flex-col overflow-y-auto rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-2xl animate-in fade-in zoom-in-95">
+            <div className="p-4 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
+              <div className="min-w-0">
+                <h3 className="font-black text-base sm:text-lg text-slate-900 dark:text-slate-100 break-words">
                   New Student Application Form
                 </h3>
                 <p className="text-xs text-slate-500">Submit an application for admission</p>
               </div>
               <button
                 onClick={() => setShowNewAppModal(false)}
-                className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400"
+                className="w-9 h-9 sm:w-8 sm:h-8 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateApplicant} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
+            <form onSubmit={handleCreateApplicant} className="p-4 sm:p-6 space-y-4 flex-1 min-h-0 overflow-y-auto text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">First Name *</label>
@@ -997,24 +1066,24 @@ export default function AdmissionsView() {
 
       {/* New Admission Drive Modal */}
       {showNewDriveModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="glass-panel max-w-xl w-full rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <div>
-                <h3 className="font-black text-lg text-slate-900 dark:text-slate-100">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+          <div className="glass-panel max-w-xl w-full max-h-[90vh] flex flex-col overflow-y-auto rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-2xl animate-in fade-in zoom-in-95">
+            <div className="p-4 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
+              <div className="min-w-0">
+                <h3 className="font-black text-base sm:text-lg text-slate-900 dark:text-slate-100 break-words">
                   Create Admission Drive Campaign
                 </h3>
                 <p className="text-xs text-slate-500">Publish a new student intake cycle</p>
               </div>
               <button
                 onClick={() => setShowNewDriveModal(false)}
-                className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400"
+                className="w-9 h-9 sm:w-8 sm:h-8 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateDrive} className="p-6 space-y-4 text-xs">
+            <form onSubmit={handleCreateDrive} className="p-4 sm:p-6 space-y-4 flex-1 min-h-0 overflow-y-auto text-xs">
               <div>
                 <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">Campaign Title *</label>
                 <input

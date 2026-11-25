@@ -34,6 +34,11 @@ from education.education.api_modules.common import (
     _resolve_default_program,
     _get_program_enrollment,
     update_email_group,
+    get_instructor_for_user,
+    get_dashboard_stats,
+    get_dashboard_schedule,
+    get_recent_assessments,
+    get_dashboard_announcements,
 )
 
 from education.education.api_modules.auth import (
@@ -41,9 +46,13 @@ from education.education.api_modules.auth import (
     get_user_role,
     get_school_abbr_logo,
     portal_login,
+    get_csrf_token,
     get_portal_context,
     get_guardian_info,
     get_guardian_students,
+    get_demo_accounts,
+    get_preview_targets,
+    get_preview_context,
 )
 
 from education.education.api_modules.students import (
@@ -137,6 +146,7 @@ from education.education.api_modules.assessment import (
     get_assessment_setup_metadata,
     get_student_report_card_data,
     get_batch_report_cards_data,
+    get_reports_tools_summary,
 )
 
 from education.education.api_modules.fees import (
@@ -149,6 +159,7 @@ from education.education.api_modules.fees import (
     get_all_invoices_for_admin,
     create_payment_entry,
     submit_sales_invoice,
+    get_payment_modes,
 )
 
 from education.education.api_modules.achievements import (
@@ -157,6 +168,23 @@ from education.education.api_modules.achievements import (
     create_student_log,
     delete_student_log,
     get_notification_logs,
+)
+
+from education.education.api_modules.program_enrollment_tool import (
+    get_program_enrollment_tool_metadata,
+    get_program_enrollment_tool_students,
+    enroll_students_via_tool,
+)
+
+from education.education.api_modules.student_group_tool import (
+    get_student_group_tool_metadata,
+    get_student_group_proposals,
+    create_student_groups_via_tool,
+)
+
+from education.education.api_modules.landing import (
+    get_landing_context,
+    get_open_admissions,
 )
 
 from education.education.api_modules.admissions import (

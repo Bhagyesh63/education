@@ -1,3 +1,4 @@
+import { todayISO } from '../utils/date';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { 
@@ -49,6 +50,7 @@ export default function ScheduleView() {
 
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [selectedProgramFilter, setSelectedProgramFilter] = useState('all');
   const [viewMode, setViewMode] = useState('day'); // 'day' | 'week'
   const [teacherFilter, setTeacherFilter] = useState(isInstructor ? 'my' : 'all'); // 'my' | 'all'
@@ -97,7 +99,7 @@ export default function ScheduleView() {
     const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     const shortNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = todayISO();
 
     for (let i = 0; i < 7; i++) {
       const d = new Date(currentWeekStart);
@@ -156,7 +158,7 @@ export default function ScheduleView() {
     course: '',
     student_group: '',
     instructor: '',
-    schedule_date: new Date().toISOString().split('T')[0],
+    schedule_date: todayISO(),
     from_time: '09:00:00',
     to_time: '10:00:00',
     room: '',
@@ -219,23 +221,37 @@ export default function ScheduleView() {
     return found ? (found.room_name || found.name) : roomId;
   };
 
-  const myInstructorName = instructorInfo?.instructor_name || instructorInfo?.name || 'Rajesh Patel';
-  const currentStudent = isStaff ? null : (activeStudentId || studentProfile?.name || 'EDU-STU-2026-00001');
+  // Logged-in instructor's own Instructor record (from portal context, else resolved by the backend metadata)
+  const myInstructorId = instructorInfo?.name || meta.current_instructor || '';
+  const myInstructorName = instructorInfo?.instructor_name
+    || (meta.instructors || []).find(i => i.name === myInstructorId)?.instructor_name
+    || myInstructorId;
+  const currentStudent = isStaff ? null : (activeStudentId || studentProfile?.name || null);
+  const weekFromDate = weekDays[0]?.dateStr;
+  const weekToDate = weekDays[6]?.dateStr;
 
   const fetchSchedule = () => {
     setLoading(true);
+    setLoadError(null);
     const prog = selectedProgramFilter === 'all' ? null : selectedProgramFilter;
     const groups = (selectedProgramFilter === 'all' || isStaff || selectedProgramFilter !== activeProgram)
       ? null
       : studentGroups;
 
-    const effectiveInstructor = isInstructor 
-      ? myInstructorName 
-      : (selectedInstructorFilter || myInstructorName);
+    const effectiveInstructor = isInstructor
+      ? myInstructorId
+      : (selectedInstructorFilter || meta.instructors?.[0]?.name || '');
 
     const instructorParam = (teacherFilter === 'my') ? effectiveInstructor : null;
 
-    api.getCourseSchedule(prog, groups, currentStudent, instructorParam)
+    if (teacherFilter === 'my' && !effectiveInstructor) {
+      // No Instructor record linked to this login (or none selected) -> nothing to show
+      setEvents([]);
+      setLoading(false);
+      return;
+    }
+
+    api.getCourseSchedule(prog, groups, currentStudent, instructorParam, weekFromDate, weekToDate)
       .then((data) => {
         const mapped = (data || []).map((item) => ({
           id: item.name,
@@ -255,18 +271,17 @@ export default function ScheduleView() {
       .catch((err) => {
         console.error('Error fetching course schedule:', err);
         setEvents([]);
+        setLoadError(err.message || 'Failed to load the class schedule.');
       })
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
     fetchSchedule();
-  }, [activeProgram, studentGroups, selectedProgramFilter, isStaff, teacherFilter, selectedInstructorFilter, currentStudent]);
+  }, [activeProgram, studentGroups, selectedProgramFilter, isStaff, teacherFilter, selectedInstructorFilter, currentStudent, myInstructorId, weekFromDate, weekToDate, meta.instructors]);
 
   const availablePrograms = Array.from(
     new Set([
-      'Standard 5',
-      'Standard 6',
       ...(programs || []).map(p => (typeof p === 'object' ? p.program : p)).filter(Boolean),
       ...events.map(e => e.program).filter(Boolean),
       ...(meta.student_groups || []).map(g => g.program).filter(Boolean)
@@ -294,19 +309,7 @@ export default function ScheduleView() {
       const data = (meta.courses && meta.courses.length > 0) ? meta : await api.getScheduleMetadata();
       if (data) {
         setMeta(data);
-        const targetCourse = initialOverrides?.course || (
-          (isInstructor && myInstructorName.toLowerCase().includes('rajesh'))
-          ? 'Science'
-          : (isInstructor && myInstructorName.toLowerCase().includes('neha'))
-          ? 'English'
-          : (isInstructor && myInstructorName.toLowerCase().includes('verma'))
-          ? 'Mathematics'
-          : (isInstructor && myInstructorName.toLowerCase().includes('vikram'))
-          ? 'Social Studies'
-          : (data.courses?.[0]?.name || 'Mathematics')
-        );
-
-        let targetGroup = data.student_groups?.[0]?.name || 'Standard 5 - Section A';
+        let targetGroup = data.student_groups?.[0]?.name || '';
         if (initialOverrides?.program) {
           const matched = (data.student_groups || []).find(g => g.program === initialOverrides.program);
           if (matched) targetGroup = matched.name;
@@ -318,14 +321,23 @@ export default function ScheduleView() {
           if (matched) targetGroup = matched.name;
         }
 
+        // Pick the course: explicit override, else the group's course, else a course this
+        // instructor is mapped to, else the first course on record.
+        const groupMeta = (data.student_groups || []).find(g => g.name === targetGroup);
+        const ownId = instructorInfo?.name || data.current_instructor || '';
+        const mappedCourse = ownId
+          ? Object.keys(data.course_instructors || {}).find(c => (data.course_instructors[c] || []).some(i => i.name === ownId))
+          : null;
+        const targetCourse = initialOverrides?.course || groupMeta?.course || mappedCourse || data.courses?.[0]?.name || '';
+
         setFormData({
           course: targetCourse,
           student_group: targetGroup,
-          instructor: myInstructorName,
-          schedule_date: weekDays[selectedDayIndex]?.dateStr || new Date().toISOString().split('T')[0],
+          instructor: ownId || data.instructors?.[0]?.name || '',
+          schedule_date: weekDays[selectedDayIndex]?.dateStr || todayISO(),
           from_time: '09:00:00',
           to_time: '10:00:00',
-          room: data.rooms?.[0]?.name || 'HTL-ROOM-2026-00001',
+          room: groupMeta?.default_room || data.rooms?.[0]?.name || '',
         });
       }
     } catch (err) {
@@ -563,7 +575,7 @@ export default function ScheduleView() {
                 }`}
               >
                 <span>{w.student_name}</span>
-                <span className="text-[10px] opacity-75">({w.relation || 'Ward'})</span>
+                <span className="text-[11px] opacity-75">({w.relation || 'Ward'})</span>
               </button>
             );
           })}
@@ -571,11 +583,11 @@ export default function ScheduleView() {
       )}
 
       {/* Top Banner & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h2 className="text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">Lecture Timetable</h2>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 border border-brand-200/60 dark:border-brand-800">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1 basis-[260px]">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+            <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">Lecture Timetable</h2>
+            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 border border-brand-200/60 dark:border-brand-800">
               {events.length} Lectures Scheduled
             </span>
           </div>
@@ -584,12 +596,12 @@ export default function ScheduleView() {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {/* View mode toggle: Day vs Week Matrix */}
           <div className="flex items-center bg-slate-100 dark:bg-slate-800/90 rounded-xl p-1 border border-slate-200/60 dark:border-slate-700/60">
             <button
               onClick={() => setViewMode('day')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+              className={`flex items-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg text-xs font-semibold transition ${
                 viewMode === 'day'
                   ? 'bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-400 shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -600,7 +612,7 @@ export default function ScheduleView() {
             </button>
             <button
               onClick={() => setViewMode('week')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+              className={`flex items-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg text-xs font-semibold transition ${
                 viewMode === 'week'
                   ? 'bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-400 shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -616,7 +628,7 @@ export default function ScheduleView() {
             <div className="flex items-center bg-slate-100 dark:bg-slate-800/90 rounded-xl p-1 border border-slate-200/60 dark:border-slate-700/60">
               <button
                 onClick={() => setTeacherFilter('my')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                className={`px-3 py-2 sm:py-1.5 rounded-lg text-xs font-semibold transition ${
                   teacherFilter === 'my'
                     ? 'bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-400 shadow-xs'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -626,7 +638,7 @@ export default function ScheduleView() {
               </button>
               <button
                 onClick={() => setTeacherFilter('all')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                className={`px-3 py-2 sm:py-1.5 rounded-lg text-xs font-semibold transition ${
                   teacherFilter === 'all'
                     ? 'bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-400 shadow-xs'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -639,11 +651,11 @@ export default function ScheduleView() {
 
           {/* Instructor Selector when Admin selects My Lectures */}
           {isAdmin && teacherFilter === 'my' && (
-            <div className="relative">
+            <div className="relative flex-1 min-w-[140px] sm:flex-none">
               <select
-                value={selectedInstructorFilter || myInstructorName}
+                value={selectedInstructorFilter || meta.instructors?.[0]?.name || ''}
                 onChange={(e) => setSelectedInstructorFilter(e.target.value)}
-                className="appearance-none bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-3.5 pr-8 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs cursor-pointer transition min-w-[140px]"
+                className="appearance-none bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-3.5 pr-8 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs cursor-pointer transition w-full sm:w-auto min-w-[140px]"
               >
                 {(meta.instructors || []).map(ins => (
                   <option key={ins.name} value={ins.name}>
@@ -656,11 +668,11 @@ export default function ScheduleView() {
           )}
 
           {/* Program Filter */}
-          <div className="relative">
+          <div className="relative flex-1 min-w-[140px] sm:flex-none">
             <select
               value={selectedProgramFilter}
               onChange={(e) => setSelectedProgramFilter(e.target.value)}
-              className="appearance-none bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-3.5 pr-8 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs cursor-pointer transition min-w-[140px]"
+              className="appearance-none bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-3.5 pr-8 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs cursor-pointer transition w-full sm:w-auto min-w-[140px]"
             >
               <option value="all">All Programs</option>
               {availablePrograms.map(p => (
@@ -674,7 +686,7 @@ export default function ScheduleView() {
           {isStaff ? (
             <button
               onClick={openScheduleModal}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-xs transition active:scale-95 shrink-0"
+              className="flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-xs transition active:scale-95 shrink-0"
             >
               <Plus className="w-4 h-4" />
               Schedule Lecture
@@ -693,12 +705,12 @@ export default function ScheduleView() {
         {/* Week Switcher Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-1">
           {/* Week Date Range & Navigation */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-xl p-1 border border-slate-200/60 dark:border-slate-700/60">
               <button
                 onClick={handlePrevWeek}
                 title="Previous Week"
-                className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-brand-600 dark:hover:text-brand-400 transition"
+                className="p-2 sm:p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-brand-600 dark:hover:text-brand-400 transition"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -708,7 +720,7 @@ export default function ScheduleView() {
               <button
                 onClick={handleNextWeek}
                 title="Next Week"
-                className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-brand-600 dark:hover:text-brand-400 transition"
+                className="p-2 sm:p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-brand-600 dark:hover:text-brand-400 transition"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
@@ -716,21 +728,21 @@ export default function ScheduleView() {
 
             <button
               onClick={handleTodayWeek}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 border border-brand-200/60 dark:border-brand-800 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition"
+              className="px-3 py-2 sm:py-1.5 rounded-xl text-xs font-semibold bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 border border-brand-200/60 dark:border-brand-800 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition"
             >
               Current Week
             </button>
           </div>
 
           {/* Search bar inside timetable */}
-          <div className="relative min-w-[220px]">
+          <div className="relative w-full sm:w-auto sm:min-w-[220px]">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               placeholder="Search subject, room, teacher..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 rounded-xl pl-8 pr-3 py-2 sm:py-1.5 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
             />
             {searchQuery && (
               <button
@@ -773,7 +785,7 @@ export default function ScheduleView() {
                   <div className="mt-0.5 flex items-center justify-center gap-1">
                     <span className="text-sm font-extrabold">{d.dayOfMonth}</span>
                     {countForDay > 0 && (
-                      <span className={`inline-block px-1.5 py-0.2 rounded-full text-[9px] font-bold ${isSelected ? 'bg-white/20 text-white' : 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'}`}>
+                      <span className={`inline-block px-1.5 py-0 rounded-full text-[11px] leading-4 font-bold ${isSelected ? 'bg-white/20 text-white' : 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'}`}>
                         {countForDay}
                       </span>
                     )}
@@ -790,6 +802,20 @@ export default function ScheduleView() {
         <div className="flex items-center justify-center p-12 text-slate-400 text-sm">
           <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mr-3" />
           Loading class schedule...
+        </div>
+      ) : loadError ? (
+        <div className="glass-panel rounded-3xl p-12 text-center border border-rose-200/80 dark:border-rose-900/60">
+          <div className="w-14 h-14 rounded-2xl bg-rose-50 dark:bg-rose-950/60 text-rose-500 flex items-center justify-center mx-auto mb-3">
+            <AlertCircle className="w-7 h-7" />
+          </div>
+          <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">Could not load the class schedule</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm mx-auto">{loadError}</p>
+          <button
+            onClick={fetchSchedule}
+            className="mt-4 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold transition"
+          >
+            Retry
+          </button>
         </div>
       ) : viewMode === 'day' ? (
         /* DAY VIEW */
@@ -824,19 +850,19 @@ export default function ScheduleView() {
                   style={{ backgroundColor: item.color || '#4f46e5' }}
                 />
 
-                <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row md:flex-col xl:flex-row sm:items-start md:items-stretch xl:items-start justify-between gap-3">
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
                       <span 
-                        className="w-2.5 h-2.5 rounded-full"
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
                         style={{ backgroundColor: item.color || '#4f46e5' }}
                       />
-                      <h4 className="text-base font-bold text-slate-900 dark:text-slate-100 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition">
+                      <h4 className="text-base font-bold text-slate-900 dark:text-slate-100 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition min-w-0 break-words">
                         {item.title}
                       </h4>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 pl-4">
-                      <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 text-[10px] font-bold border border-indigo-200/50 dark:border-indigo-800/50">
+                      <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 text-[11px] font-bold border border-indigo-200/50 dark:border-indigo-800/50">
                         {item.student_group || item.program}
                       </span>
                       <span className="text-[11px] text-slate-400 font-mono">
@@ -845,20 +871,20 @@ export default function ScheduleView() {
                     </div>
                   </div>
 
-                  <div className="px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-1 shrink-0">
+                  <div className="px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-1 shrink-0 self-start">
                     <Clock className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                     {formatTime12h(item.from_time)} - {formatTime12h(item.to_time)}
                   </div>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
-                  <div className="flex items-center gap-1.5 font-medium">
-                    <User className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{item.instructor || 'Staff Instructor'}</span>
+                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600 dark:text-slate-400">
+                  <div className="flex items-center gap-1.5 font-medium min-w-0">
+                    <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span className="truncate" title={item.instructor || 'Staff Instructor'}>{item.instructor || 'Staff Instructor'}</span>
                   </div>
-                  <div className="flex items-center gap-1.5 font-medium bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1 rounded-lg border border-slate-200/60 dark:border-slate-700/60">
-                    <MapPin className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />
-                    <span>{getFriendlyRoomName(item.room)}</span>
+                  <div className="flex items-center gap-1.5 font-medium min-w-0 max-w-full bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1 rounded-lg border border-slate-200/60 dark:border-slate-700/60">
+                    <MapPin className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400 shrink-0" />
+                    <span className="truncate">{getFriendlyRoomName(item.room)}</span>
                   </div>
                 </div>
 
@@ -870,7 +896,7 @@ export default function ScheduleView() {
                         e.stopPropagation();
                         openAttendanceModalForLecture(item);
                       }}
-                      className="px-3 py-1.5 rounded-xl bg-brand-50 dark:bg-brand-950/80 hover:bg-brand-100 dark:hover:bg-brand-900/80 text-brand-700 dark:text-brand-300 text-xs font-bold flex items-center gap-1.5 transition active:scale-95"
+                      className="px-3 py-2 sm:py-1.5 rounded-xl bg-brand-50 dark:bg-brand-950/80 hover:bg-brand-100 dark:hover:bg-brand-900/80 text-brand-700 dark:text-brand-300 text-xs font-bold flex items-center gap-1.5 transition active:scale-95"
                     >
                       <UserCheck className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />
                       <span>Take Attendance</span>
@@ -883,7 +909,7 @@ export default function ScheduleView() {
                         setDeleteError(null);
                         setDeleteConfirmOpen(true);
                       }}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition"
+                      className="p-2 sm:p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition"
                       title="Cancel Lecture"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -896,7 +922,12 @@ export default function ScheduleView() {
         )
       ) : (
         /* WEEK MATRIX VIEW */
-        <div className="overflow-x-auto rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+        <div className="space-y-2">
+        <p className="lg:hidden text-[11px] text-slate-400 dark:text-slate-500 flex items-center gap-1 print:hidden">
+          <ChevronRight className="w-3 h-3 shrink-0" />
+          Swipe sideways to see the full week
+        </p>
+        <div className="overflow-x-auto overscroll-x-contain rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
           <div className="min-w-[800px]">
             {/* Header row for days */}
             <div className="grid grid-cols-7 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-center">
@@ -920,7 +951,7 @@ export default function ScheduleView() {
                 return (
                   <div 
                     key={d.dateStr}
-                    className={`p-2 space-y-2.5 ${d.isToday ? 'bg-brand-50/20 dark:bg-brand-950/10' : ''}`}
+                    className={`p-2 space-y-2.5 min-w-0 ${d.isToday ? 'bg-brand-50/20 dark:bg-brand-950/10' : ''}`}
                   >
                     {dayEvents.length === 0 ? (
                       <div className="h-full flex items-center justify-center py-12 text-[11px] text-slate-400 dark:text-slate-600 italic">
@@ -944,14 +975,14 @@ export default function ScheduleView() {
                             <div className="text-xs font-bold text-slate-900 dark:text-slate-100 line-clamp-1 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition">
                               {ev.course || ev.title}
                             </div>
-                            <div className="text-[10px] font-semibold text-brand-600 dark:text-brand-400 mt-0.5">
+                            <div className="text-[11px] font-semibold text-brand-600 dark:text-brand-400 mt-0.5">
                               {formatTime12h(ev.from_time)} - {formatTime12h(ev.to_time)}
                             </div>
-                            <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1 truncate">
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1 truncate">
                               <Users className="w-3 h-3 shrink-0" />
                               <span className="truncate">{ev.student_group}</span>
                             </div>
-                            <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-1 truncate">
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-1 truncate">
                               <MapPin className="w-3 h-3 shrink-0 text-slate-400" />
                               <span className="truncate">{getFriendlyRoomName(ev.room)}</span>
                             </div>
@@ -964,7 +995,7 @@ export default function ScheduleView() {
                                     e.stopPropagation();
                                     openAttendanceModalForLecture(ev);
                                   }}
-                                  className="flex-1 py-1 px-1.5 rounded-lg bg-brand-50 dark:bg-brand-950/80 text-[10px] font-bold text-brand-600 dark:text-brand-400 hover:bg-brand-100 flex items-center justify-center gap-1 transition"
+                                  className="flex-1 py-1 px-1.5 rounded-lg bg-brand-50 dark:bg-brand-950/80 text-[11px] font-bold text-brand-600 dark:text-brand-400 hover:bg-brand-100 flex items-center justify-center gap-1 transition"
                                 >
                                   <UserCheck className="w-3 h-3" />
                                   <span>Attendance</span>
@@ -993,18 +1024,19 @@ export default function ScheduleView() {
             </div>
           </div>
         </div>
+        </div>
       )}
 
       {/* Delete Lecture Confirmation Modal */}
       {deleteConfirmOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-4 animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-sm w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-4 animate-in fade-in zoom-in-95">
             <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto shadow-xs">
               <Trash2 className="w-6 h-6" />
             </div>
             <div className="text-center space-y-1">
               <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">Cancel Lecture</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <p className="text-xs text-slate-500 dark:text-slate-400 break-words">
                 Are you sure you want to remove this scheduled lecture ({deletingId}) from the timetable?
               </p>
             </div>
@@ -1023,14 +1055,14 @@ export default function ScheduleView() {
                   setDeletingId(null);
                   setDeleteError(null);
                 }}
-                className="flex-1 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition"
+                className="flex-1 py-2.5 sm:py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition"
               >
                 Keep Lecture
               </button>
               <button
                 onClick={handleDeleteLecture}
                 disabled={isDeleting}
-                className="flex-1 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 transition shadow-xs flex items-center justify-center gap-1.5 disabled:opacity-50"
+                className="flex-1 py-2.5 sm:py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 transition shadow-xs flex items-center justify-center gap-1.5 disabled:opacity-50"
               >
                 {isDeleting ? (
                   <>
@@ -1052,22 +1084,22 @@ export default function ScheduleView() {
           <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-xl w-full p-5 sm:p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-5 animate-in fade-in zoom-in-95 max-h-[92vh] flex flex-col my-auto overflow-hidden">
             
             {/* Header */}
-            <div className="flex items-start justify-between pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
-              <div className="flex items-center gap-3">
+            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
                 <div 
                   className="w-10 h-10 rounded-2xl flex items-center justify-center text-white font-bold shadow-md shrink-0"
                   style={{ backgroundColor: selectedLectureForDetails.color || '#4f46e5' }}
                 >
                   <BookOpen className="w-5 h-5" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-lg text-slate-900 dark:text-slate-100">
+                    <h3 className="font-bold text-base sm:text-lg text-slate-900 dark:text-slate-100 break-words">
                       {selectedLectureForDetails.title || selectedLectureForDetails.course}
                     </h3>
                   </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-slate-700/50">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
+                    <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md break-all border border-slate-200/50 dark:border-slate-700/50">
                       {selectedLectureForDetails.id}
                     </span>
                     <span className="text-xs text-brand-600 dark:text-brand-400 font-semibold">
@@ -1082,7 +1114,7 @@ export default function ScheduleView() {
                   setDetailsModalOpen(false);
                   setSelectedLectureForDetails(null);
                 }}
-                className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
+                className="w-9 h-9 sm:w-8 sm:h-8 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1098,9 +1130,9 @@ export default function ScheduleView() {
                   <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
                     <CalendarIcon className="w-4 h-4" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Date & Day</div>
-                    <div className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                    <div className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5 break-words">
                       {formatLectureDateDisplay(selectedLectureForDetails.date)}
                     </div>
                   </div>
@@ -1111,12 +1143,12 @@ export default function ScheduleView() {
                   <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 mt-0.5">
                     <Clock className="w-4 h-4" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Timing & Duration</div>
                     <div className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5 flex items-center gap-1.5 flex-wrap">
                       <span>{formatTime12h(selectedLectureForDetails.from_time)} - {formatTime12h(selectedLectureForDetails.to_time)}</span>
                       {calculateDuration(selectedLectureForDetails.from_time, selectedLectureForDetails.to_time) && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 font-semibold">
+                        <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 font-semibold">
                           {calculateDuration(selectedLectureForDetails.from_time, selectedLectureForDetails.to_time)}
                         </span>
                       )}
@@ -1129,9 +1161,9 @@ export default function ScheduleView() {
                   <div className="w-8 h-8 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0 mt-0.5">
                     <User className="w-4 h-4" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Assigned Faculty</div>
-                    <div className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                    <div className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5 break-words">
                       {selectedLectureForDetails.instructor || 'Staff Instructor'}
                     </div>
                   </div>
@@ -1142,13 +1174,13 @@ export default function ScheduleView() {
                   <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 mt-0.5">
                     <MapPin className="w-4 h-4" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Classroom / Room</div>
-                    <div className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                    <div className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5 break-words">
                       {getFriendlyRoomName(selectedLectureForDetails.room)}
                     </div>
                     {selectedLectureForDetails.room && selectedLectureForDetails.room !== getFriendlyRoomName(selectedLectureForDetails.room) && (
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                      <div className="text-[11px] text-slate-400 font-mono mt-0.5 break-all">
                         ID: {selectedLectureForDetails.room}
                       </div>
                     )}
@@ -1158,27 +1190,27 @@ export default function ScheduleView() {
 
               {/* Student Group / Cohort Banner */}
               <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800/80 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Users className="w-4 h-4 text-brand-600 dark:text-brand-400" />
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Users className="w-4 h-4 text-brand-600 dark:text-brand-400 shrink-0" />
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 break-words min-w-0">
                       {selectedLectureForDetails.student_group || 'All Students'}
                     </span>
                   </div>
                   
                   {/* Live attendance badge */}
                   {loadingDetailsRoster ? (
-                    <span className="text-[10px] text-slate-400 animate-pulse flex items-center gap-1">
+                    <span className="text-[11px] text-slate-400 animate-pulse flex items-center gap-1">
                       <div className="w-2.5 h-2.5 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
                       Checking status...
                     </span>
                   ) : detailsRosterSummary?.isMarked ? (
-                    <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800 flex items-center gap-1">
+                    <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800 flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" />
                       Attendance Recorded
                     </span>
                   ) : (
-                    <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800">
+                    <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800">
                       Attendance Pending
                     </span>
                   )}
@@ -1187,12 +1219,12 @@ export default function ScheduleView() {
                 {/* Roster Metrics / Breakdown */}
                 {detailsRosterSummary && (
                   <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700/60 space-y-2">
-                    <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-slate-600 dark:text-slate-400">
                       <span className="font-semibold text-slate-700 dark:text-slate-300">
                         Enrolled Students ({detailsRosterSummary.totalStudents})
                       </span>
                       {detailsRosterSummary.isMarked && (
-                        <div className="flex items-center gap-2 text-[11px] font-bold">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-bold">
                           <span className="text-emerald-600 dark:text-emerald-400">
                             {detailsRosterSummary.present} Present
                           </span>
@@ -1230,35 +1262,35 @@ export default function ScheduleView() {
                           {detailsRosterSummary.students
                             .filter(s => (s.student_name || s.student || '').toLowerCase().includes(detailsStudentSearch.toLowerCase()))
                             .map((stu) => (
-                              <div key={stu.student} className="p-2 flex items-center justify-between text-xs hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
-                                <div className="flex items-center gap-2 truncate">
-                                  <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-[10px] flex items-center justify-center shrink-0">
+                              <div key={stu.student} className="p-2 flex items-center justify-between gap-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                                <div className="flex items-center gap-2 truncate min-w-0">
+                                  <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-[11px] flex items-center justify-center shrink-0">
                                     {(stu.student_name || stu.student || 'S')[0]}
                                   </div>
-                                  <div className="truncate">
+                                  <div className="truncate min-w-0" title={stu.student_name || stu.student}>
                                     <span className="font-semibold text-slate-800 dark:text-slate-200 text-xs">
                                       {stu.student_name || stu.student}
                                     </span>
-                                    <span className="text-[10px] text-slate-400 font-mono ml-1.5">
+                                    <span className="text-[11px] text-slate-400 font-mono ml-1.5">
                                       {stu.student}
                                     </span>
                                   </div>
                                 </div>
-                                <div>
+                                <div className="shrink-0">
                                   {stu.status === 'Present' ? (
-                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400">
+                                    <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400">
                                       Present
                                     </span>
                                   ) : stu.status === 'Absent' ? (
-                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400">
+                                    <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-rose-50 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400">
                                       Absent
                                     </span>
                                   ) : stu.status === 'Leave' || stu.on_leave ? (
-                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400">
+                                    <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-50 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400">
                                       On Leave
                                     </span>
                                   ) : (
-                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                                    <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
                                       Unmarked
                                     </span>
                                   )}
@@ -1274,7 +1306,7 @@ export default function ScheduleView() {
             </div>
 
             {/* Footer / Quick Actions */}
-            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0">
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0">
               <div>
                 {isStaff && (
                   <button
@@ -1286,7 +1318,7 @@ export default function ScheduleView() {
                       setDeleteError(null);
                       setDeleteConfirmOpen(true);
                     }}
-                    className="px-3 py-2 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-xs font-semibold flex items-center gap-1.5 transition"
+                    className="px-3 py-2.5 sm:py-2 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-xs font-semibold flex items-center gap-1.5 transition"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Cancel Lecture</span>
@@ -1294,13 +1326,13 @@ export default function ScheduleView() {
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 ml-auto">
                 <button
                   onClick={() => {
                     setDetailsModalOpen(false);
                     setSelectedLectureForDetails(null);
                   }}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  className="px-4 py-2.5 sm:py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                 >
                   Close
                 </button>
@@ -1312,7 +1344,7 @@ export default function ScheduleView() {
                       setSelectedLectureForDetails(null);
                       openAttendanceModalForLecture(targetLecture);
                     }}
-                    className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 flex items-center gap-1.5"
+                    className="px-4 py-2.5 sm:py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 flex items-center gap-1.5"
                   >
                     <UserCheck className="w-4 h-4" />
                     <span>{detailsRosterSummary?.isMarked ? 'Update Attendance' : 'Take Attendance'}</span>
@@ -1330,17 +1362,17 @@ export default function ScheduleView() {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full p-4 sm:p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-4 animate-in fade-in zoom-in-95 max-h-[92vh] flex flex-col my-auto overflow-hidden">
             {/* Modal Header */}
-            <div className="flex items-start justify-between pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
-              <div className="space-y-1">
+            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="space-y-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold">
+                  <div className="w-8 h-8 rounded-xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold shrink-0">
                     <UserCheck className="w-4 h-4" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">
                       Take Class Attendance
                     </h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                    <p className="text-xs text-slate-500 dark:text-slate-400 break-words">
                       {activeLectureForAtt.title || activeLectureForAtt.course} • {activeLectureForAtt.student_group}
                     </p>
                   </div>
@@ -1349,7 +1381,7 @@ export default function ScheduleView() {
 
               <button
                 onClick={() => setAttModalOpen(false)}
-                className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
+                className="w-9 h-9 sm:w-8 sm:h-8 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1357,7 +1389,7 @@ export default function ScheduleView() {
 
             {/* Quick Metrics & Batch Controls */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="px-3 py-1 rounded-xl text-xs font-bold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800">
                   {modalPresentCount} Present
                 </span>
@@ -1371,11 +1403,11 @@ export default function ScheduleView() {
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="grid grid-cols-2 sm:flex sm:items-center gap-2">
                 <button
                   type="button"
                   onClick={() => handleMarkAllRoster('Present')}
-                  className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400 text-xs font-bold transition flex items-center gap-1.5"
+                  className="px-3 py-2 sm:py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400 text-xs font-bold transition flex items-center justify-center gap-1.5"
                 >
                   <Check className="w-3.5 h-3.5 text-emerald-500" />
                   <span>All Present</span>
@@ -1383,7 +1415,7 @@ export default function ScheduleView() {
                 <button
                   type="button"
                   onClick={() => handleMarkAllRoster('Absent')}
-                  className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 text-xs font-bold transition flex items-center gap-1.5"
+                  className="px-3 py-2 sm:py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 text-xs font-bold transition flex items-center justify-center gap-1.5"
                 >
                   <X className="w-3.5 h-3.5 text-rose-500" />
                   <span>All Absent</span>
@@ -1399,7 +1431,7 @@ export default function ScheduleView() {
                 placeholder="Search student by name or roll number..."
                 value={rosterSearch}
                 onChange={(e) => setRosterSearch(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+                className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 rounded-xl pl-8 pr-3 py-2 sm:py-1.5 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
               />
             </div>
 
@@ -1424,31 +1456,31 @@ export default function ScheduleView() {
                     return (
                       <div 
                         key={stu.student}
-                        className="p-3 flex items-center justify-between gap-3 hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition"
+                        className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition"
                       >
-                        <div className="flex items-center gap-3">
-                          <span className="w-7 h-7 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-bold flex items-center justify-center">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="w-7 h-7 shrink-0 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-bold flex items-center justify-center">
                             {stu.group_roll_number || '—'}
                           </span>
-                          <div>
-                            <div className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                              <span>{stu.student_name}</span>
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="break-words min-w-0">{stu.student_name}</span>
                               {stu.on_leave && (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800">
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800">
                                   Approved Leave {stu.leave_reason ? `(${stu.leave_reason})` : ''}
                                 </span>
                               )}
                             </div>
-                            <span className="text-[11px] text-slate-400 font-mono">{stu.student}</span>
+                            <span className="text-[11px] text-slate-400 font-mono break-all">{stu.student}</span>
                           </div>
                         </div>
 
                         {/* Status Toggle Buttons */}
-                        <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="grid grid-cols-2 sm:flex sm:items-center gap-1.5 shrink-0">
                           <button
                             type="button"
                             onClick={() => handleToggleStudentRoster(stu.student, 'Present')}
-                            className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                            className={`px-3 py-2 sm:py-1 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
                               isPresent
                                 ? 'bg-emerald-600 text-white shadow-xs'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 hover:text-emerald-600'
@@ -1461,7 +1493,7 @@ export default function ScheduleView() {
                           <button
                             type="button"
                             onClick={() => handleToggleStudentRoster(stu.student, 'Absent')}
-                            className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                            className={`px-3 py-2 sm:py-1 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
                               isAbsent
                                 ? 'bg-rose-600 text-white shadow-xs'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-rose-50 dark:hover:bg-rose-950/50 hover:text-rose-600'
@@ -1486,11 +1518,11 @@ export default function ScheduleView() {
             )}
 
             {/* Modal Bottom Actions */}
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800 shrink-0">
+            <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 sm:gap-3 pt-3 border-t border-slate-100 dark:border-slate-800 shrink-0">
               <button
                 type="button"
                 onClick={() => setAttModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                className="px-4 py-2.5 sm:py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
               >
                 Cancel
               </button>
@@ -1498,7 +1530,7 @@ export default function ScheduleView() {
                 type="button"
                 onClick={handleSubmitLectureAttendance}
                 disabled={savingAttendance || rosterLoading || roster.length === 0}
-                className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                className="px-5 py-2.5 sm:py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {savingAttendance ? (
                   <>
@@ -1521,14 +1553,14 @@ export default function ScheduleView() {
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full shadow-2xl border border-slate-100 dark:border-slate-800 max-h-[92vh] flex flex-col my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <CalendarIcon className="w-5 h-5 text-brand-600 dark:text-brand-400" />
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <CalendarIcon className="w-5 h-5 shrink-0 text-brand-600 dark:text-brand-400" />
                 <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">Schedule New Lecture</h3>
               </div>
               <button 
                 onClick={() => setIsModalOpen(false)}
-                className="w-7 h-7 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
+                className="w-9 h-9 sm:w-7 sm:h-7 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1568,7 +1600,7 @@ export default function ScheduleView() {
 
                   {/* Course / Subject */}
                   <div>
-                    <div className="flex items-center justify-between mb-1">
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 mb-1">
                       <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                         Course / Subject *
                       </label>
@@ -1644,9 +1676,9 @@ export default function ScheduleView() {
                         <div className="w-full bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-xs text-slate-800 dark:text-slate-200 font-semibold flex items-center justify-between shadow-xs">
                           <span className="flex items-center gap-1.5 truncate">
                             <User className="w-3.5 h-3.5 text-brand-500 shrink-0" />
-                            <span className="truncate">{myInstructorName}</span>
+                            <span className="truncate">{myInstructorName || 'No instructor record linked to your account'}</span>
                           </span>
-                          <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-700 px-2 py-0.5 rounded-md border border-slate-200/60 dark:border-slate-600 flex items-center gap-1 shrink-0">
+                          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-700 px-2 py-0.5 rounded-md border border-slate-200/60 dark:border-slate-600 flex items-center gap-1 shrink-0">
                             <Lock className="w-2.5 h-2.5" />
                             <span>You</span>
                           </span>
@@ -1727,14 +1759,14 @@ export default function ScheduleView() {
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
-                    className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                    className="px-4 py-2.5 sm:py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 disabled:opacity-50"
+                    className="px-5 py-2.5 sm:py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition active:scale-95 disabled:opacity-50"
                   >
                     {submitting ? 'Scheduling...' : 'Save Lecture'}
                   </button>

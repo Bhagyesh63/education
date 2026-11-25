@@ -1,3 +1,4 @@
+import { todayISO } from '../utils/date';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BookOpen, CheckCircle, Clock, ChevronDown, ChevronUp, 
@@ -49,11 +50,12 @@ export default function CoursesView() {
     studentProfile,
   } = useAuth();
 
-  const [selectedProgram, setSelectedProgram] = useState(activeProgram || 'Standard 5');
+  const [selectedProgram, setSelectedProgram] = useState(activeProgram || '');
   const [allProgramsList, setAllProgramsList] = useState([]);
   const [courseSearch, setCourseSearch] = useState('');
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [expandedIndex, setExpandedIndex] = useState(0);
 
   // Modal states for Viewing content
@@ -142,7 +144,7 @@ export default function CoursesView() {
   const [newCourseName, setNewCourseName] = useState('');
   const [newCourseProgram, setNewCourseProgram] = useState('');
   const [newCourseDept, setNewCourseDept] = useState('');
-  const [newCourseGradingScale, setNewCourseGradingScale] = useState('ABC School Grading Scale');
+  const [newCourseGradingScale, setNewCourseGradingScale] = useState('');
   const [newCourseDesc, setNewCourseDesc] = useState('');
   const [createCourseSubmitting, setCreateCourseSubmitting] = useState(false);
   const [createCourseError, setCreateCourseError] = useState(null);
@@ -156,7 +158,7 @@ export default function CoursesView() {
     course: '',
     student_group: '',
     instructor: '',
-    schedule_date: new Date().toISOString().split('T')[0],
+    schedule_date: todayISO(),
     from_time: '09:00:00',
     to_time: '10:00:00',
     room: '',
@@ -172,6 +174,7 @@ export default function CoursesView() {
     year_start_date: '',
     year_end_date: '',
   });
+  const [yearPresetBase, setYearPresetBase] = useState(() => new Date().getFullYear());
   const [createYearSubmitting, setCreateYearSubmitting] = useState(false);
   const [createYearError, setCreateYearError] = useState(null);
   const [createYearSuccess, setCreateYearSuccess] = useState(null);
@@ -196,28 +199,38 @@ export default function CoursesView() {
     }
   }, [activeProgram]);
 
-  // Load all system programs for the dropdown switcher
+  // Staff can browse every program; students / guardians only see their own enrolments
   useEffect(() => {
+    if (!isStaff) {
+      setAllProgramsList([]);
+      return;
+    }
     api.getAllPrograms()
       .then((data) => {
         if (data && Array.isArray(data)) {
-          setAllProgramsList(data.map(p => p.program_name || p.name));
+          setAllProgramsList(data.map(p => p.name || p.program_name));
         }
       })
-      .catch(() => {});
-  }, []);
+      .catch((err) => console.error('Failed to load programs:', err));
+  }, [isStaff]);
 
   const availableProgramsList = useMemo(() => {
     return Array.from(new Set([
-      'Standard 5',
-      'Standard 6',
       ...(programs || []).map(p => typeof p === 'object' ? p.program : p).filter(Boolean),
       ...allProgramsList
     ])).filter(Boolean).sort();
   }, [programs, allProgramsList]);
 
+  // Default to the first available program once the list is known
+  useEffect(() => {
+    if (!selectedProgram && availableProgramsList.length > 0) {
+      setSelectedProgram(activeProgram || availableProgramsList[0]);
+    }
+  }, [availableProgramsList, selectedProgram, activeProgram]);
+
   const fetchProgramCourses = async (progParam) => {
     const prog = progParam || selectedProgram || activeProgram;
+    setLoadError(null);
     if (!prog) {
       setCourses([]);
       setLoading(false);
@@ -226,7 +239,7 @@ export default function CoursesView() {
     setLoading(true);
     try {
       const curriculum = await api.getProgramCurriculumDetails(prog);
-      if (curriculum && Array.isArray(curriculum) && curriculum.length > 0) {
+      if (Array.isArray(curriculum)) {
         setCourses(curriculum);
         setLoading(false);
         return;
@@ -271,8 +284,8 @@ export default function CoursesView() {
           return {
             name: cName,
             courseName: courseDoc?.course_name || cName,
-            department: courseDoc?.department || 'Academics',
-            description: courseDoc?.description || 'Core academic syllabus course for the current program.',
+            department: courseDoc?.department || '',
+            description: courseDoc?.description || '',
             topicsCount: topicsWithContent.length,
             topics: topicsWithContent,
           };
@@ -280,8 +293,8 @@ export default function CoursesView() {
           return {
             name: cName,
             courseName: cName,
-            department: 'Academics',
-            description: 'Standard syllabus course.',
+            department: '',
+            description: '',
             topicsCount: 0,
             topics: [],
           };
@@ -293,6 +306,7 @@ export default function CoursesView() {
     } catch (err) {
       console.error('Error fetching curriculum courses:', err);
       setCourses([]);
+      setLoadError(err.message || 'Failed to load the curriculum for this program.');
     } finally {
       setLoading(false);
     }
@@ -911,9 +925,9 @@ export default function CoursesView() {
   // =========================================================================
   const handleOpenCreateCourse = () => {
     setNewCourseName('');
-    setNewCourseProgram(selectedProgram || 'Standard 5');
+    setNewCourseProgram(selectedProgram || availableProgramsList[0] || '');
     setNewCourseDept('');
-    setNewCourseGradingScale('ABC School Grading Scale');
+    setNewCourseGradingScale('');
     setNewCourseDesc('');
     setCreateCourseError(null);
     setCreateCourseSuccess(null);
@@ -934,7 +948,7 @@ export default function CoursesView() {
         course_name: newCourseName.trim(),
         program: targetProg,
         department: newCourseDept.trim() || undefined,
-        default_grading_scale: newCourseGradingScale || 'ABC School Grading Scale',
+        default_grading_scale: newCourseGradingScale.trim() || undefined,
         description: newCourseDesc.trim() || undefined,
       });
 
@@ -967,23 +981,27 @@ export default function CoursesView() {
       const meta = await api.getScheduleMetadata();
       if (meta) {
         setScheduleMeta(meta);
-        const matchingGroup = (meta.student_groups || []).find(g => g.program === selectedProgram)
+        const matchingGroup = (meta.student_groups || []).find(g => g.program === selectedProgram && g.course === courseName)
+          || (meta.student_groups || []).find(g => g.program === selectedProgram)
           || meta.student_groups?.[0];
 
-        const defaultInstructor = instructorInfo?.instructor_name || instructorInfo?.name || meta.instructors?.[0]?.name || 'Rajesh Patel';
+        // Instructor field is a Link to Instructor -> use the record ID, never a display name
+        const courseFaculty = meta.course_instructors?.[courseName] || [];
+        const defaultInstructor = instructorInfo?.name || meta.current_instructor || courseFaculty[0]?.name || meta.instructors?.[0]?.name || '';
 
         setScheduleFormData({
           course: courseName,
-          student_group: matchingGroup?.name || 'Standard 5 - Section A',
+          student_group: matchingGroup?.name || '',
           instructor: defaultInstructor,
-          schedule_date: new Date().toISOString().split('T')[0],
+          schedule_date: todayISO(),
           from_time: '09:00:00',
           to_time: '10:00:00',
-          room: meta.rooms?.[0]?.name || 'HTL-ROOM-2026-00001',
+          room: matchingGroup?.default_room || meta.rooms?.[0]?.name || '',
         });
       }
     } catch (err) {
       console.error('Failed to load schedule metadata:', err);
+      setQuickScheduleError(err.message || 'Failed to load scheduling options.');
     }
 
     setIsQuickScheduleOpen(true);
@@ -1015,15 +1033,27 @@ export default function CoursesView() {
   // =========================================================================
   // CREATE ACADEMIC YEAR HANDLERS
   // =========================================================================
-  const handleOpenCreateYear = () => {
-    let defaultStart = '2029-04-01';
-    let defaultEnd = '2030-03-31';
-    let defaultName = '2029-2030';
-    setNewYearData({
-      academic_year_name: defaultName,
-      year_start_date: defaultStart,
-      year_end_date: defaultEnd,
-    });
+  // Builds an April-March academic year starting in the given calendar year
+  const buildYearPreset = (startYear) => ({
+    academic_year_name: `${startYear}-${startYear + 1}`,
+    year_start_date: `${startYear}-04-01`,
+    year_end_date: `${startYear + 1}-03-31`,
+  });
+
+  const handleOpenCreateYear = async () => {
+    // Suggest the year following the latest Academic Year on record (or the current year)
+    let baseYear = new Date().getFullYear();
+    try {
+      const years = await api.getAcademicYears();
+      const ends = (Array.isArray(years) ? years : [])
+        .map((y) => (y.year_end_date ? new Date(y.year_end_date).getFullYear() : null))
+        .filter(Boolean);
+      if (ends.length) baseYear = Math.max(...ends);
+    } catch (err) {
+      console.error('Failed to load academic years:', err);
+    }
+    setYearPresetBase(baseYear);
+    setNewYearData(buildYearPreset(baseYear));
     setCreateYearError(null);
     setCreateYearSuccess(null);
     setIsCreateYearOpen(true);
@@ -1081,10 +1111,10 @@ export default function CoursesView() {
       const yearList = Array.isArray(years) ? years : [];
       setAvailableAcademicYears(yearList);
       
-      const defaultYear = yearList[0]?.name || '2026-2027';
+      const defaultYear = yearList[0]?.name || '';
       const yearObj = yearList.find((y) => y.name === defaultYear);
-      let defaultStart = yearObj?.year_start_date || '2026-04-01';
-      let defaultEnd = '2026-09-30';
+      let defaultStart = yearObj?.year_start_date || '';
+      let defaultEnd = '';
       if (yearObj?.year_start_date) {
         const startD = new Date(yearObj.year_start_date);
         const midD = new Date(startD);
@@ -1246,36 +1276,40 @@ export default function CoursesView() {
                 }`}
               >
                 <span>{w.student_name}</span>
-                <span className="text-[10px] opacity-75">({w.relation || 'Ward'})</span>
+                <span className="text-[11px] opacity-75">({w.relation || 'Ward'})</span>
               </button>
             );
           })}
         </div>
       )}
 
-      {/* Top Header & Quick Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h2 className="text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
+      {/* Top Header & Quick Actions
+          Row 1: title | class switcher + search (wraps). Row 2: staff actions (always wraps).
+          Rows are sized by the content area, not the viewport, so they never overflow
+          when the sidebar takes space or the browser is zoomed. */}
+      <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1 basis-[260px]">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+            <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight break-words">
               Curriculum & Learning Syllabus
             </h2>
             <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-brand-50 text-brand-700 dark:bg-brand-950/80 dark:text-brand-300 border border-brand-200/60 dark:border-brand-800">
               {filteredCourses.length} Courses
             </span>
           </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 break-words">
             Active courses, interactive modules, and topic materials for <span className="font-semibold text-slate-700 dark:text-slate-300">{selectedProgram || activeProgram || 'Current Academic Session'}</span>
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
           {/* Program Switcher Dropdown */}
-          <div className="relative">
+          <div className="relative flex-1 min-w-[150px] sm:flex-none">
             <select
               value={selectedProgram}
               onChange={(e) => setSelectedProgram(e.target.value)}
-              className="appearance-none bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-3.5 pr-8 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs cursor-pointer transition min-w-[150px]"
+              className="appearance-none bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-3.5 pr-8 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs cursor-pointer transition w-full sm:w-auto min-w-[150px]"
             >
               {availableProgramsList.map((prog) => (
                 <option key={prog} value={prog}>
@@ -1287,14 +1321,14 @@ export default function CoursesView() {
           </div>
 
           {/* Search courses / topics */}
-          <div className="relative min-w-[200px]">
+          <div className="relative flex-1 min-w-[180px] sm:flex-none sm:min-w-[200px]">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               placeholder="Search syllabus..."
               value={courseSearch}
               onChange={(e) => setCourseSearch(e.target.value)}
-              className="w-full bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs"
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700/80 rounded-xl pl-8 pr-3 py-2 sm:py-1.5 text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 shadow-xs"
             />
             {courseSearch && (
               <button
@@ -1306,12 +1340,15 @@ export default function CoursesView() {
             )}
           </div>
 
-          {/* Staff / Teacher Action Buttons */}
+        </div>
+      </div>
+
+          {/* Staff / Teacher Action Buttons (own row, wraps at any width) */}
           {isStaff && (
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full">
               <button
                 onClick={handleOpenCreateProgram}
-                className="px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-xs font-bold text-indigo-700 dark:text-indigo-300 transition-all flex items-center gap-1.5 shadow-xs"
+                className="px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-xs font-bold text-indigo-700 dark:text-indigo-300 transition-all flex items-center justify-center gap-1.5 shadow-xs"
                 title="Create a new academic Standard or Grade (e.g. Standard 7)"
               >
                 <GraduationCap className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
@@ -1320,7 +1357,7 @@ export default function CoursesView() {
 
               <button
                 onClick={handleOpenManageProgramCourses}
-                className="px-3 py-1.5 rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/40 hover:bg-violet-100 dark:hover:bg-violet-900/50 text-xs font-bold text-violet-700 dark:text-violet-300 transition-all flex items-center gap-1.5 shadow-xs"
+                className="px-3 py-1.5 rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/40 hover:bg-violet-100 dark:hover:bg-violet-900/50 text-xs font-bold text-violet-700 dark:text-violet-300 transition-all flex items-center justify-center gap-1.5 shadow-xs"
                 title={`Manage courses assigned to ${selectedProgram || 'Standard'}`}
               >
                 <Settings2 className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
@@ -1329,7 +1366,7 @@ export default function CoursesView() {
 
               <button
                 onClick={handleOpenCreateYear}
-                className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 transition-all flex items-center gap-1.5 shadow-xs"
+                className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 transition-all flex items-center justify-center gap-1.5 shadow-xs"
                 title="Define and create a new academic year period"
               >
                 <Calendar className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
@@ -1338,7 +1375,7 @@ export default function CoursesView() {
 
               <button
                 onClick={handleOpenCreateTerm}
-                className="px-3 py-1.5 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-xs font-bold text-sky-700 dark:text-sky-300 transition-all flex items-center gap-1.5 shadow-xs"
+                className="px-3 py-1.5 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-xs font-bold text-sky-700 dark:text-sky-300 transition-all flex items-center justify-center gap-1.5 shadow-xs"
                 title="Define and create a new academic term period"
               >
                 <Clock className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
@@ -1347,7 +1384,7 @@ export default function CoursesView() {
 
               <button
                 onClick={handleOpenCreateCourse}
-                className="px-3 py-1.5 rounded-xl border border-brand-200 dark:border-brand-800 bg-brand-50/50 dark:bg-brand-950/40 hover:bg-brand-100 dark:hover:bg-brand-900/50 text-xs font-bold text-brand-700 dark:text-brand-300 transition-all flex items-center gap-1.5 shadow-xs"
+                className="px-3 py-1.5 rounded-xl border border-brand-200 dark:border-brand-800 bg-brand-50/50 dark:bg-brand-950/40 hover:bg-brand-100 dark:hover:bg-brand-900/50 text-xs font-bold text-brand-700 dark:text-brand-300 transition-all flex items-center justify-center gap-1.5 shadow-xs"
                 title="Create a new course / subject for this curriculum"
               >
                 <BookOpen className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />
@@ -1356,7 +1393,7 @@ export default function CoursesView() {
 
               <button
                 onClick={() => handleOpenAddTopic(filteredCourses[0]?.name || courses[0]?.name || '')}
-                className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 transition-all flex items-center gap-1.5 shadow-xs"
+                className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 transition-all flex items-center justify-center gap-1.5 shadow-xs"
               >
                 <Layers className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                 <span>+ Topic</span>
@@ -1364,24 +1401,23 @@ export default function CoursesView() {
 
               <button
                 onClick={() => handleOpenAddMaterial(filteredCourses[0]?.name || courses[0]?.name || '', filteredCourses[0]?.topics?.[0]?.name || courses[0]?.topics?.[0]?.name || '')}
-                className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-700 hover:to-indigo-700 text-white text-xs font-bold transition-all shadow-md shadow-brand-500/20 flex items-center gap-1.5 active:scale-95"
+                className="px-3.5 py-2 sm:py-1.5 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-700 hover:to-indigo-700 text-white text-xs font-bold transition-all shadow-md shadow-brand-500/20 flex items-center justify-center gap-1.5 active:scale-95"
               >
                 <Plus className="w-4 h-4" />
                 <span>+ Material</span>
               </button>
             </div>
           )}
-        </div>
       </div>
 
       {/* Success Notification Banner */}
       {actionSuccessMsg && (
-        <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-semibold flex items-center justify-between shadow-xs animate-in fade-in duration-200">
-          <div className="flex items-center gap-2">
+        <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-semibold flex items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-2 min-w-0">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span>{actionSuccessMsg}</span>
+            <span className="break-words min-w-0">{actionSuccessMsg}</span>
           </div>
-          <button onClick={() => setActionSuccessMsg(null)} className="text-emerald-600 hover:text-emerald-800">
+          <button onClick={() => setActionSuccessMsg(null)} className="p-1.5 -m-1.5 shrink-0 text-emerald-600 hover:text-emerald-800">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -1392,6 +1428,30 @@ export default function CoursesView() {
         <div className="p-16 text-center text-slate-400 text-sm">
           <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
           Loading course syllabus from backend...
+        </div>
+      ) : loadError ? (
+        <div className="glass-panel rounded-3xl p-12 text-center border border-rose-200/80 dark:border-rose-900/60">
+          <div className="w-14 h-14 rounded-2xl bg-rose-50 dark:bg-rose-950/60 text-rose-500 flex items-center justify-center mx-auto mb-3">
+            <AlertCircle className="w-7 h-7" />
+          </div>
+          <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">Could not load courses</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm mx-auto">{loadError}</p>
+          <button
+            onClick={() => fetchProgramCourses(selectedProgram)}
+            className="mt-4 px-4 py-2.5 sm:py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold transition"
+          >
+            Retry
+          </button>
+        </div>
+      ) : !selectedProgram && !activeProgram ? (
+        <div className="glass-panel rounded-3xl p-12 text-center border border-slate-200/80 dark:border-slate-800">
+          <div className="w-14 h-14 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 flex items-center justify-center mx-auto mb-3">
+            <GraduationCap className="w-7 h-7" />
+          </div>
+          <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">No program enrollment found</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs mx-auto">
+            {isStaff ? 'No programs have been created yet. Use "+ Standard" to create one.' : 'You are not enrolled in any program yet, so there is no syllabus to show.'}
+          </p>
         </div>
       ) : filteredCourses.length === 0 ? (
         <div className="glass-panel rounded-3xl p-12 text-center border border-slate-200/80 dark:border-slate-800">
@@ -1416,40 +1476,45 @@ export default function CoursesView() {
                 {/* Course Header Bar */}
                 <div 
                   onClick={() => setExpandedIndex(isExpanded ? -1 : idx)}
-                  className="p-5 sm:p-6 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition"
+                  className="p-5 sm:p-6 cursor-pointer flex flex-wrap items-center justify-between gap-4 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition"
                 >
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center shrink-0">
-                      <BookOpen className="w-6 h-6" />
+                  <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1 basis-[240px]">
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center shrink-0">
+                      <BookOpen className="w-5 h-5 sm:w-6 sm:h-6" />
                     </div>
 
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 break-words min-w-0">
                           {course.courseName}
                         </h3>
-                        <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[11px] font-mono font-semibold">
-                          {course.name}
-                        </span>
+                        {course.name !== course.courseName && (
+                          <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[11px] font-mono font-semibold break-all">
+                            {course.name}
+                          </span>
+                        )}
                       </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        Department: <span className="font-semibold text-slate-700 dark:text-slate-300">{course.department}</span> • {course.topicsCount} Registered Topic{course.topicsCount === 1 ? '' : 's'}
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 break-words">
+                        {course.department && (
+                          <>Department: <span className="font-semibold text-slate-700 dark:text-slate-300">{course.department}</span> • </>
+                        )}
+                        {course.topicsCount} Registered Topic{course.topicsCount === 1 ? '' : 's'}
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between sm:justify-end gap-3">
+                  <div className="flex flex-wrap items-center justify-start sm:justify-end gap-2 sm:gap-3 max-w-full">
                     <span className="text-xs font-semibold text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/80 px-3 py-1 rounded-xl">
                       {course.topicsCount > 0 ? `${course.topicsCount} Topics` : 'Active Subject'}
                     </span>
 
                     {/* Teacher Quick Actions on course header */}
                     {isStaff && (
-                      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
                           onClick={() => handleOpenQuickSchedule(course)}
-                          className="px-2.5 py-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/80 rounded-lg transition flex items-center gap-1 border border-indigo-200/50 dark:border-indigo-800/50 shadow-2xs"
+                          className="px-2.5 py-2 sm:py-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/80 rounded-lg transition flex items-center gap-1 border border-indigo-200/50 dark:border-indigo-800/50 shadow-2xs"
                           title="Schedule a lecture for this course in timetable"
                         >
                           <Calendar className="w-3 h-3" />
@@ -1459,7 +1524,7 @@ export default function CoursesView() {
                         <button
                           type="button"
                           onClick={() => handleOpenAddMaterial(course.name, course.topics?.[0]?.name || '')}
-                          className="px-2.5 py-1 text-[11px] font-bold text-brand-600 hover:text-brand-700 dark:text-brand-400 hover:bg-brand-50 dark:hover:bg-brand-950/80 rounded-lg transition"
+                          className="px-2.5 py-2 sm:py-1 text-[11px] font-bold text-brand-600 hover:text-brand-700 dark:text-brand-400 hover:bg-brand-50 dark:hover:bg-brand-950/80 rounded-lg transition"
                         >
                           + Add Material
                         </button>
@@ -1467,7 +1532,7 @@ export default function CoursesView() {
                         <button
                           type="button"
                           onClick={() => handleInitiateDeleteCourse(course)}
-                          className="px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/80 rounded-lg transition flex items-center gap-1 border border-rose-200/50 dark:border-rose-800/50 shadow-2xs"
+                          className="px-2.5 py-2 sm:py-1 text-[11px] font-bold text-rose-600 hover:text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/80 rounded-lg transition flex items-center gap-1 border border-rose-200/50 dark:border-rose-800/50 shadow-2xs"
                           title={`Delete / Remove ${course.courseName || course.name} from ${selectedProgram}`}
                         >
                           <Trash2 className="w-3 h-3 text-rose-500" />
@@ -1485,7 +1550,7 @@ export default function CoursesView() {
                 {/* Collapsible Topic List */}
                 {isExpanded && (
                   <div className="border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/40 dark:bg-slate-900/40 p-5 sm:p-6 space-y-4 animate-in fade-in duration-200">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
                         Topic Modules & Learning Materials
                       </h4>
@@ -1526,29 +1591,29 @@ export default function CoursesView() {
                         {course.topics.map((tItem, tIdx) => (
                           <div 
                             key={tIdx}
-                            className="p-5 rounded-2xl bg-white dark:bg-slate-800/90 border border-slate-200/70 dark:border-slate-700/60 space-y-3.5 shadow-xs"
+                            className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-800/90 border border-slate-200/70 dark:border-slate-700/60 space-y-3.5 shadow-xs"
                           >
                             {/* Topic Title Bar */}
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <h5 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-3">
+                              <div className="min-w-0">
+                                <h5 className="text-sm font-bold text-slate-900 dark:text-slate-100 break-words">
                                   {tItem.title}
                                 </h5>
                                 {tItem.description && (
-                                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 break-words">
                                     {tItem.description}
                                   </p>
                                 )}
                               </div>
-                              <div className="flex items-center gap-2">
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold uppercase bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
                                   Active Topic
                                 </span>
                                 {isStaff && (
                                   <button
                                     type="button"
                                     onClick={() => handleOpenAddMaterial(course.name, tItem.name)}
-                                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-brand-50 dark:bg-slate-700 dark:hover:bg-brand-950/80 text-[11px] font-bold text-slate-600 hover:text-brand-600 dark:text-slate-300 dark:hover:text-brand-400 transition flex items-center gap-1"
+                                    className="px-2.5 py-2 sm:py-1 rounded-lg bg-slate-100 hover:bg-brand-50 dark:bg-slate-700 dark:hover:bg-brand-950/80 text-[11px] font-bold text-slate-600 hover:text-brand-600 dark:text-slate-300 dark:hover:text-brand-400 transition flex items-center gap-1"
                                     title="Add content to this topic"
                                   >
                                     <Plus className="w-3 h-3" />
@@ -1583,14 +1648,14 @@ export default function CoursesView() {
                                     {/* Text info */}
                                     <div className="min-w-0 flex-1">
                                       <p className="font-semibold text-xs text-slate-800 dark:text-slate-100 truncate group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">
-                                        {c.title}
+                                        {c.label || c.title}
                                       </p>
-                                      <div className="flex items-center gap-1.5 mt-0.5">
-                                        <span className="text-[10px] capitalize font-medium text-slate-400 dark:text-slate-400">
+                                      <div className="flex flex-wrap items-center gap-x-1.5 mt-0.5">
+                                        <span className="text-[11px] capitalize font-medium text-slate-400 dark:text-slate-400">
                                           {c.type}
                                         </span>
-                                        <span className="text-[10px] text-slate-300 dark:text-slate-600">•</span>
-                                        <span className="text-[10px] text-brand-600 dark:text-brand-400 font-bold group-hover:underline">
+                                        <span className="text-[11px] text-slate-300 dark:text-slate-600">•</span>
+                                        <span className="text-[11px] text-brand-600 dark:text-brand-400 font-bold group-hover:underline">
                                           {c.type === 'video' ? 'Watch Video' : 
                                            c.type === 'quiz' ? (isStaff ? 'Marks & Preview' : 'Take Assessment') : 
                                            'Read Article'}
@@ -1606,7 +1671,7 @@ export default function CoursesView() {
                                 ))}
                               </div>
                             ) : (
-                              <div className="p-4 rounded-xl bg-slate-50/50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-700/50 text-xs text-slate-400 text-center flex items-center justify-between">
+                              <div className="p-4 rounded-xl bg-slate-50/50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-700/50 text-xs text-slate-400 text-center flex flex-col sm:flex-row items-center justify-between gap-2">
                                 <span>No materials added to this topic yet.</span>
                                 {isStaff && (
                                   <button
@@ -1638,9 +1703,9 @@ export default function CoursesView() {
           <div className="glass-panel w-full max-w-3xl max-h-[92vh] rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col my-auto overflow-hidden bg-white dark:bg-slate-900">
             {/* Header */}
             <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-start justify-between gap-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+              <div className="space-y-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
                     <FileText className="w-3 h-3" />
                     Learning Article
                   </span>
@@ -1651,7 +1716,7 @@ export default function CoursesView() {
                     </span>
                   )}
                 </div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 break-words">
                   {viewingContent.details?.title || viewingContent.title}
                 </h3>
                 {viewingContent.details?.author && (
@@ -1663,14 +1728,14 @@ export default function CoursesView() {
               </div>
               <button 
                 onClick={handleCloseViewer}
-                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center shrink-0 transition"
+                className="w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center shrink-0 transition"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Body */}
-            <div className="p-6 sm:p-8 overflow-y-auto space-y-4 flex-1">
+            <div className="p-4 sm:p-8 overflow-y-auto space-y-4 flex-1">
               {viewingContent.loading ? (
                 <div className="py-16 text-center text-slate-400 text-sm">
                   <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
@@ -1682,20 +1747,20 @@ export default function CoursesView() {
                 </div>
               ) : (
                 <div 
-                  className="learning-content-body prose dark:prose-invert max-w-none text-slate-800 dark:text-slate-200"
+                  className="learning-content-body prose dark:prose-invert max-w-none text-slate-800 dark:text-slate-200 break-words [&_img]:max-w-full [&_img]:h-auto [&_pre]:overflow-x-auto [&_table]:block [&_table]:overflow-x-auto [&_iframe]:max-w-full"
                   dangerouslySetInnerHTML={{ __html: viewingContent.details?.content || '<p>No content provided in this article.</p>' }}
                 />
               )}
             </div>
 
             {/* Footer */}
-            <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between">
+            <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs text-slate-400 flex items-center gap-1">
                 <CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> Finished reading
               </span>
               <button
                 onClick={handleCloseViewer}
-                className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition shadow-xs"
+                className="px-5 py-2.5 sm:py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition shadow-xs"
               >
                 Done Reading
               </button>
@@ -1717,12 +1782,12 @@ export default function CoursesView() {
                   <Play className="w-4 h-4 fill-current" />
                 </div>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                  <div className="flex flex-wrap items-center gap-x-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
                       {viewingContent.details?.provider || 'Video'} Lesson
                     </span>
                     {viewingContent.details?.duration > 0 && (
-                      <span className="text-[10px] font-semibold text-slate-400 flex items-center gap-0.5">
+                      <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-0.5">
                         <Clock className="w-2.5 h-2.5" />
                         {formatDuration(viewingContent.details.duration)}
                       </span>
@@ -1735,7 +1800,7 @@ export default function CoursesView() {
               </div>
               <button 
                 onClick={handleCloseViewer}
-                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center shrink-0 transition"
+                className="w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center shrink-0 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1778,7 +1843,7 @@ export default function CoursesView() {
                             href={viewingContent.details.url} 
                             target="_blank" 
                             rel="noopener noreferrer"
-                            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold inline-flex items-center gap-1.5 transition"
+                            className="px-4 py-2.5 sm:py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold inline-flex items-center gap-1.5 transition"
                           >
                             <span>Open Video in New Tab</span>
                             <ExternalLink className="w-3.5 h-3.5" />
@@ -1797,7 +1862,7 @@ export default function CoursesView() {
                     <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 space-y-1">
                       <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Lesson Notes & Summary</h4>
                       <div 
-                        className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed"
+                        className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed break-words [&_img]:max-w-full [&_img]:h-auto"
                         dangerouslySetInnerHTML={{ __html: viewingContent.details.description }}
                       />
                     </div>
@@ -1810,7 +1875,7 @@ export default function CoursesView() {
             <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-end">
               <button
                 onClick={handleCloseViewer}
-                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-xs"
+                className="px-5 py-2.5 sm:py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-xs"
               >
                 Close Player
               </button>
@@ -1826,17 +1891,17 @@ export default function CoursesView() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fade-in">
           <div className="glass-panel w-full max-w-3xl max-h-[92vh] rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col my-auto overflow-hidden bg-white dark:bg-slate-900">
             {/* Header with Title and Mode Switcher */}
-            <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-start justify-between gap-4">
+            <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-start justify-between gap-3 sm:gap-4">
               <div className="space-y-1.5 min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
                     <HelpCircle className="w-3 h-3" />
                     Quiz Assessment
                   </span>
 
                   {/* Attempts Indicator */}
                   {!isStaff && quizStatus && (
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${
+                    <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1 ${
                       quizStatus.is_locked
                         ? 'bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
                         : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
@@ -1862,7 +1927,7 @@ export default function CoursesView() {
 
               <button 
                 onClick={handleCloseViewer}
-                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center shrink-0 transition"
+                className="w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center shrink-0 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1870,11 +1935,11 @@ export default function CoursesView() {
 
             {/* Teacher Tabs (Student Submissions vs Preview Mode) */}
             {isStaff && (
-              <div className="px-5 pt-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center gap-2">
+              <div className="px-3 sm:px-5 pt-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center gap-2 overflow-x-auto">
                 <button
                   type="button"
                   onClick={() => setQuizActiveTab('submissions')}
-                  className={`pb-2.5 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition ${
+                  className={`pb-2.5 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 whitespace-nowrap shrink-0 transition ${
                     quizActiveTab === 'submissions'
                       ? 'border-brand-600 text-brand-600 dark:border-brand-400 dark:text-brand-400'
                       : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1886,7 +1951,7 @@ export default function CoursesView() {
                 <button
                   type="button"
                   onClick={() => setQuizActiveTab('take')}
-                  className={`pb-2.5 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition ${
+                  className={`pb-2.5 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 whitespace-nowrap shrink-0 transition ${
                     quizActiveTab === 'take'
                       ? 'border-brand-600 text-brand-600 dark:border-brand-400 dark:text-brand-400'
                       : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1899,7 +1964,7 @@ export default function CoursesView() {
             )}
 
             {/* Modal Body */}
-            <div className="p-6 overflow-y-auto space-y-6 flex-1">
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-6 flex-1">
               {viewingContent.loading ? (
                 <div className="py-16 text-center text-slate-400 text-sm">
                   <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
@@ -1917,25 +1982,25 @@ export default function CoursesView() {
                   {/* KPI Summary Cards */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200/70 dark:border-slate-700/60">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Total Attempts</span>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Total Attempts</span>
                       <p className="text-xl font-extrabold text-slate-900 dark:text-slate-100 mt-0.5">
                         {quizSubmissionsData.stats?.total_attempts || 0}
                       </p>
                     </div>
                     <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200/70 dark:border-slate-700/60">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Students Tested</span>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Students Tested</span>
                       <p className="text-xl font-extrabold text-brand-600 dark:text-brand-400 mt-0.5">
                         {quizSubmissionsData.stats?.unique_students || 0}
                       </p>
                     </div>
                     <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200/70 dark:border-slate-700/60">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Class Average</span>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Class Average</span>
                       <p className="text-xl font-extrabold text-indigo-600 dark:text-indigo-400 mt-0.5">
                         {quizSubmissionsData.stats?.avg_score || 0}%
                       </p>
                     </div>
                     <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200/70 dark:border-slate-700/60">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Pass Rate</span>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Pass Rate</span>
                       <p className="text-xl font-extrabold text-emerald-600 dark:text-emerald-400 mt-0.5">
                         {quizSubmissionsData.stats?.pass_rate || 0}%
                       </p>
@@ -1982,7 +2047,7 @@ export default function CoursesView() {
                     </div>
                   ) : (
                     <div className="overflow-x-auto rounded-2xl border border-slate-200/80 dark:border-slate-700/80">
-                      <table className="w-full text-left text-xs">
+                      <table className="w-full min-w-[640px] text-left text-xs">
                         <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-400 font-semibold border-b border-slate-200/80 dark:border-slate-700/80">
                           <tr>
                             <th className="p-3">Student</th>
@@ -2004,12 +2069,12 @@ export default function CoursesView() {
                                     </div>
                                     <div className="min-w-0">
                                       <p className="truncate">{sub.student_name}</p>
-                                      <span className="text-[10px] text-slate-400 font-mono block">{sub.student}</span>
+                                      <span className="text-[11px] text-slate-400 font-mono block">{sub.student}</span>
                                     </div>
                                   </div>
                                 </td>
                                 <td className="p-3 text-slate-600 dark:text-slate-300">
-                                  <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold">
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[11px] font-semibold">
                                     {sub.program}
                                   </span>
                                 </td>
@@ -2041,13 +2106,13 @@ export default function CoursesView() {
                 /* ========================================================= */
                 /* LOCKED SCREEN: STUDENT EXHAUSTED ALL ATTEMPTS             */
                 /* ========================================================= */
-                <div className="p-8 text-center space-y-4 rounded-3xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                <div className="p-5 sm:p-8 text-center space-y-4 rounded-3xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                   <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto shadow-sm">
                     <Lock className="w-7 h-7" />
                   </div>
 
                   <div className="space-y-1">
-                    <h4 className="text-lg font-extrabold text-slate-900 dark:text-slate-100">
+                    <h4 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-slate-100">
                       Maximum Attempts Completed ({quizStatus.attempts_used} / {quizStatus.max_attempts})
                     </h4>
                     <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
@@ -2056,9 +2121,9 @@ export default function CoursesView() {
                   </div>
 
                   <div className="inline-flex items-center gap-3 p-3.5 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-xs">
-                    <Award className="w-5 h-5 text-brand-600" />
+                    <Award className="w-5 h-5 text-brand-600 shrink-0" />
                     <div className="text-left">
-                      <span className="text-[10px] text-slate-400 block font-semibold uppercase">Highest Recorded Score</span>
+                      <span className="text-[11px] text-slate-400 block font-semibold uppercase">Highest Recorded Score</span>
                       <span className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
                         {quizStatus.highest_score}% {quizStatus.highest_score >= (viewingContent.details?.passing_score || 70) ? '(Passed)' : '(Completed)'}
                       </span>
@@ -2067,11 +2132,11 @@ export default function CoursesView() {
 
                   {quizStatus.history && quizStatus.history.length > 0 && (
                     <div className="max-w-md mx-auto pt-3 border-t border-slate-200/60 dark:border-slate-700/60 space-y-2">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Attempt Log</span>
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Attempt Log</span>
                       {quizStatus.history.map((h, hIdx) => (
-                        <div key={hIdx} className="p-2.5 rounded-xl bg-white dark:bg-slate-800 flex items-center justify-between text-xs">
+                        <div key={hIdx} className="p-2.5 rounded-xl bg-white dark:bg-slate-800 flex items-center justify-between gap-2 text-xs">
                           <span className="font-semibold text-slate-700 dark:text-slate-300">Attempt #{hIdx + 1}</span>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
                             h.status === 'Pass' 
                               ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                               : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
@@ -2100,7 +2165,7 @@ export default function CoursesView() {
 
                   {/* Progress Indicator */}
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-semibold">
+                    <div className="flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400 font-semibold">
                       <span>Question {quizQuestionIndex + 1} of {viewingContent.details?.questions?.length || 1}</span>
                       <span>{Math.round(((quizQuestionIndex + 1) / (viewingContent.details?.questions?.length || 1)) * 100)}% Complete</span>
                     </div>
@@ -2122,7 +2187,7 @@ export default function CoursesView() {
                       <div className="space-y-4">
                         <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
                           <h4 
-                            className="text-sm font-bold text-slate-900 dark:text-slate-100 leading-snug"
+                            className="text-sm font-bold text-slate-900 dark:text-slate-100 leading-snug break-words [&_img]:max-w-full [&_img]:h-auto"
                             dangerouslySetInnerHTML={{ __html: currentQ.question }}
                           />
                         </div>
@@ -2151,7 +2216,7 @@ export default function CoursesView() {
                                 }`}>
                                   {optionLetter}
                                 </span>
-                                <span className="flex-1">{opt.option}</span>
+                                <span className="flex-1 min-w-0 break-words">{opt.option}</span>
                                 {isSelected && (
                                   <div className="w-5 h-5 rounded-full bg-brand-600 text-white flex items-center justify-center shrink-0">
                                     <Check className="w-3 h-3 stroke-[3]" />
@@ -2175,7 +2240,7 @@ export default function CoursesView() {
                   return (
                     <div className="space-y-6">
                       {/* Result Banner */}
-                      <div className={`p-6 rounded-3xl text-center space-y-2 border ${
+                      <div className={`p-5 sm:p-6 rounded-3xl text-center space-y-2 border ${
                         passed
                           ? 'bg-emerald-50 dark:bg-emerald-950/70 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
                           : 'bg-amber-50 dark:bg-amber-950/70 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200'
@@ -2217,10 +2282,23 @@ export default function CoursesView() {
                           Assessment Review & Correct Answers
                         </h5>
 
+                        {quizSubmitResult && !quizSubmitResult.answers_revealed && (
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            Correct answers are shown once you pass the quiz or use your last attempt.
+                          </p>
+                        )}
+
                         {viewingContent.details.questions.map((q, qIdx) => {
-                          const chosenAns = quizAnswers[qIdx];
-                          const correctOpt = (q.options || []).find(o => o.is_correct);
-                          const isCorrect = chosenAns === correctOpt?.option;
+                          // The server grades the attempt; students only receive the answer key
+                          // (correct_option / explanation) once answers are revealed.
+                          const review = quizSubmitResult?.review?.find((r) => r.index === qIdx);
+                          const chosenAns = review ? review.selected : quizAnswers[qIdx];
+                          const localCorrect = (q.options || []).find(o => o.is_correct);
+                          const correctOpt = review
+                            ? (review.correct_option ? { option: review.correct_option } : null)
+                            : localCorrect;
+                          const isCorrect = review ? review.is_correct : chosenAns === localCorrect?.option;
+                          const explanation = review?.explanation;
 
                           return (
                             <div 
@@ -2229,10 +2307,10 @@ export default function CoursesView() {
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <span 
-                                  className="font-bold text-slate-800 dark:text-slate-200"
+                                  className="font-bold text-slate-800 dark:text-slate-200 min-w-0 break-words"
                                   dangerouslySetInnerHTML={{ __html: `Q${qIdx + 1}: ${q.question}` }}
                                 />
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                                <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold shrink-0 ${
                                   isCorrect 
                                     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                                     : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
@@ -2242,21 +2320,27 @@ export default function CoursesView() {
                               </div>
 
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
-                                <div>
-                                  <span className="text-[10px] text-slate-400 block">Your Answer:</span>
+                                <div className="min-w-0 break-words">
+                                  <span className="text-[11px] text-slate-400 block">Your Answer:</span>
                                   <span className={`font-semibold ${isCorrect ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                                     {chosenAns || '(No option selected)'}
                                   </span>
                                 </div>
                                 {!isCorrect && correctOpt && (
-                                  <div>
-                                    <span className="text-[10px] text-slate-400 block">Correct Answer:</span>
+                                  <div className="min-w-0 break-words">
+                                    <span className="text-[11px] text-slate-400 block">Correct Answer:</span>
                                     <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                                       {correctOpt.option}
                                     </span>
                                   </div>
                                 )}
                               </div>
+                              {explanation && (
+                                <p className="pt-2 border-t border-slate-200/60 dark:border-slate-700/60 text-slate-600 dark:text-slate-300 break-words">
+                                  <span className="text-[11px] text-slate-400 block">Explanation:</span>
+                                  {explanation}
+                                </p>
+                              )}
                             </div>
                           );
                         })}
@@ -2269,22 +2353,22 @@ export default function CoursesView() {
 
             {/* Quiz Footer Controls */}
             {viewingContent.details?.questions?.length > 0 && (
-              <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between">
+              <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex flex-wrap items-center justify-between gap-2">
                 {isStaff && quizActiveTab === 'submissions' ? (
-                  <div className="flex items-center justify-between w-full">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 w-full">
                     <span className="text-xs text-slate-400">
                       Submissions are saved directly in Frappe database (<code className="text-brand-600 dark:text-brand-400">Quiz Activity</code>).
                     </span>
                     <button
                       type="button"
                       onClick={handleCloseViewer}
-                      className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition shadow-xs"
+                      className="px-5 py-2.5 sm:py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition shadow-xs"
                     >
                       Close Window
                     </button>
                   </div>
                 ) : !isStaff && quizStatus?.is_locked && !quizSubmitted ? (
-                  <div className="flex items-center justify-between w-full">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 w-full">
                     <span className="text-xs text-slate-400 flex items-center gap-1.5">
                       <Lock className="w-3.5 h-3.5 text-slate-400" />
                       Attempts locked for this quiz.
@@ -2292,7 +2376,7 @@ export default function CoursesView() {
                     <button
                       type="button"
                       onClick={handleCloseViewer}
-                      className="px-5 py-2 rounded-xl bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold transition shadow-xs"
+                      className="px-5 py-2.5 sm:py-2 rounded-xl bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold transition shadow-xs"
                     >
                       Close
                     </button>
@@ -2303,7 +2387,7 @@ export default function CoursesView() {
                       type="button"
                       disabled={quizQuestionIndex === 0}
                       onClick={() => setQuizQuestionIndex(prev => Math.max(0, prev - 1))}
-                      className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white dark:hover:bg-slate-800 transition flex items-center gap-1.5"
+                      className="px-3.5 py-2.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white dark:hover:bg-slate-800 transition flex items-center gap-1.5"
                     >
                       <ArrowLeft className="w-3.5 h-3.5" />
                       Previous
@@ -2313,7 +2397,7 @@ export default function CoursesView() {
                       <button
                         type="button"
                         onClick={() => setQuizQuestionIndex(prev => prev + 1)}
-                        className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                        className="px-4 py-2.5 sm:py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
                       >
                         <span>Next Question</span>
                         <ArrowRight className="w-3.5 h-3.5" />
@@ -2323,7 +2407,7 @@ export default function CoursesView() {
                         type="button"
                         disabled={isSubmittingQuiz}
                         onClick={handleSubmitQuiz}
-                        className="px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold transition shadow-md shadow-emerald-500/20 flex items-center gap-1.5 disabled:opacity-50"
+                        className="px-5 py-2.5 sm:py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold transition shadow-md shadow-emerald-500/20 flex items-center gap-1.5 disabled:opacity-50"
                       >
                         {isSubmittingQuiz ? (
                           <>
@@ -2351,7 +2435,7 @@ export default function CoursesView() {
                           setQuizQuestionIndex(0);
                           setQuizSubmitResult(null);
                         }}
-                        className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 transition flex items-center gap-1.5"
+                        className="px-4 py-2.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 transition flex items-center gap-1.5"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
                         <span>{isStaff ? 'Retake Preview' : `Retake Quiz (${quizStatus?.attempts_remaining || 1} left)`}</span>
@@ -2366,7 +2450,7 @@ export default function CoursesView() {
                     <button
                       type="button"
                       onClick={handleCloseViewer}
-                      className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition shadow-xs"
+                      className="px-5 py-2.5 sm:py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition shadow-xs"
                     >
                       Done & Close
                     </button>
@@ -2385,9 +2469,9 @@ export default function CoursesView() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fade-in">
           <div className="glass-panel w-full max-w-2xl max-h-[92vh] rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col my-auto overflow-hidden bg-white dark:bg-slate-900">
             {/* Modal Header */}
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 break-words">
                   Add Learning Material
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -2396,7 +2480,7 @@ export default function CoursesView() {
               </div>
               <button 
                 onClick={() => setIsAddMaterialOpen(false)}
-                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center shrink-0 transition"
+                className="w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center shrink-0 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2408,7 +2492,7 @@ export default function CoursesView() {
               {formError && (
                 <div className="p-3.5 rounded-2xl bg-rose-50 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 text-xs font-medium border border-rose-200 dark:border-rose-800 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{formError}</span>
+                  <span className="min-w-0 break-words">{formError}</span>
                 </div>
               )}
 
@@ -2468,7 +2552,7 @@ export default function CoursesView() {
               {/* Material Type Segmented Tabs */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Content Type</label>
-                <div className="grid grid-cols-3 gap-2 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-2 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700">
                   {[
                     { id: 'Article', icon: FileText, label: 'Article / Note' },
                     { id: 'Video', icon: Video, label: 'Video Lesson' },
@@ -2523,7 +2607,7 @@ export default function CoursesView() {
                       type="text"
                       value={articleAuthor}
                       onChange={(e) => setArticleAuthor(e.target.value)}
-                      placeholder="e.g. Dr. Neha Shah"
+                      placeholder="Author name (defaults to you)"
                       className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-hidden"
                     />
                   </div>
@@ -2641,7 +2725,7 @@ export default function CoursesView() {
 
                   {/* Dynamic Questions Builder */}
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                         Questions ({quizQuestions.length})
                       </label>
@@ -2667,7 +2751,7 @@ export default function CoursesView() {
                             <button
                               type="button"
                               onClick={() => handleRemoveQuizQuestion(qIdx)}
-                              className="text-slate-400 hover:text-rose-500 transition"
+                              className="p-2 -m-2 rounded-lg text-slate-400 hover:text-rose-500 transition"
                               title="Delete Question"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -2704,7 +2788,7 @@ export default function CoursesView() {
                                 placeholder={`Option ${String.fromCharCode(65 + optIdx)}`}
                                 value={opt.option}
                                 onChange={(e) => handleOptionChange(qIdx, optIdx, e.target.value)}
-                                className="flex-1 px-3 py-1.5 text-xs rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-hidden"
+                                className="flex-1 min-w-0 px-3 py-1.5 text-xs rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-hidden"
                                 required
                               />
                             </div>
@@ -2719,18 +2803,18 @@ export default function CoursesView() {
               </div>
 
               {/* Form Action Buttons */}
-              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-3 shrink-0">
+              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex flex-wrap items-center justify-end gap-3 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsAddMaterialOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  className="px-4 py-2.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-700 hover:to-indigo-700 text-white text-xs font-bold transition shadow-md shadow-brand-500/20 flex items-center gap-2 disabled:opacity-50"
+                  className="px-5 py-2.5 sm:py-2 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-700 hover:to-indigo-700 text-white text-xs font-bold transition shadow-md shadow-brand-500/20 flex items-center gap-2 disabled:opacity-50"
                 >
                   {isSubmitting ? (
                     <>
@@ -2756,9 +2840,9 @@ export default function CoursesView() {
       {isAddTopicOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fade-in">
           <div className="glass-panel w-full max-w-md max-h-[92vh] flex flex-col my-auto rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl overflow-hidden bg-white dark:bg-slate-900">
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 break-words">
                   Add Course Topic Module
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -2767,7 +2851,7 @@ export default function CoursesView() {
               </div>
               <button 
                 onClick={() => setIsAddTopicOpen(false)}
-                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center shrink-0 transition"
+                className="w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center shrink-0 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2818,18 +2902,18 @@ export default function CoursesView() {
                 </div>
               </div>
 
-              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-3 shrink-0">
+              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex flex-wrap items-center justify-end gap-3 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsAddTopicOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  className="px-4 py-2.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isTopicSubmitting}
-                  className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-5 py-2.5 sm:py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {isTopicSubmitting ? 'Creating...' : '+ Create Topic'}
                 </button>
@@ -2843,13 +2927,13 @@ export default function CoursesView() {
       {isCreateProgramOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl">
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-xs">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-xs shrink-0">
                   <GraduationCap className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                <div className="min-w-0">
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 break-words">
                     New Standard / Program
                   </h3>
                   <p className="text-xs text-slate-400">Add an academic grade to the curriculum</p>
@@ -2857,7 +2941,7 @@ export default function CoursesView() {
               </div>
               <button
                 onClick={() => setIsCreateProgramOpen(false)}
-                className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
+                className="p-2 sm:p-1.5 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2868,14 +2952,14 @@ export default function CoursesView() {
                 {createProgramError && (
                   <div className="p-3 rounded-xl bg-rose-50 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 text-xs font-semibold border border-rose-200 dark:border-rose-800 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>{createProgramError}</span>
+                    <span className="min-w-0 break-words">{createProgramError}</span>
                   </div>
                 )}
 
                 {createProgramSuccess && (
                   <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 text-xs font-semibold border border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>{createProgramSuccess}</span>
+                    <span className="min-w-0 break-words">{createProgramSuccess}</span>
                   </div>
                 )}
 
@@ -2920,7 +3004,7 @@ export default function CoursesView() {
                 </div>
 
                 <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
+                  <label className="font-bold text-slate-700 dark:text-slate-300 mb-1.5 flex flex-wrap items-center justify-between gap-x-2">
                     <span>Curriculum Courses & Subjects</span>
                     <span className="text-[11px] font-normal text-slate-400">Optional</span>
                   </label>
@@ -2956,11 +3040,11 @@ export default function CoursesView() {
                           return (
                             <label
                               key={cName}
-                              className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition ${
+                              className={`flex items-center justify-between gap-2 p-2 rounded-lg cursor-pointer transition ${
                                 isChecked ? 'bg-brand-50/70 dark:bg-brand-950/50 text-brand-700 dark:text-brand-300' : 'hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-300'
                               }`}
                             >
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
                                 <input
                                   type="checkbox"
                                   checked={isChecked}
@@ -2973,10 +3057,10 @@ export default function CoursesView() {
                                   }}
                                   className="rounded-sm border-slate-300 text-brand-600 focus:ring-brand-500"
                                 />
-                                <span className="font-semibold">{c.course_name || cName}</span>
+                                <span className="font-semibold break-words min-w-0">{c.course_name || cName}</span>
                               </div>
                               {c.department && (
-                                <span className="text-[10px] text-slate-400 bg-slate-200/50 dark:bg-slate-700/50 px-1.5 py-0.5 rounded-sm">
+                                <span className="text-[11px] text-slate-400 bg-slate-200/50 dark:bg-slate-700/50 px-1.5 py-0.5 rounded-sm shrink-0">
                                   {c.department}
                                 </span>
                               )}
@@ -2999,18 +3083,18 @@ export default function CoursesView() {
                 </div>
               </div>
 
-              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-2 shrink-0">
+              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex flex-wrap items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsCreateProgramOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  className="px-4 py-2.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={createProgramSubmitting}
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-5 py-2.5 sm:py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {createProgramSubmitting ? (
                     <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -3029,13 +3113,13 @@ export default function CoursesView() {
       {isManageProgramCoursesOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-lg max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl">
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-violet-50 dark:bg-violet-950/80 text-violet-600 dark:text-violet-400 flex items-center justify-center shadow-xs">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-violet-50 dark:bg-violet-950/80 text-violet-600 dark:text-violet-400 flex items-center justify-center shadow-xs shrink-0">
                   <Settings2 className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                <div className="min-w-0">
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 break-words">
                     Manage Courses: {selectedProgram || 'Standard'}
                   </h3>
                   <p className="text-xs text-slate-400">Curriculum subjects linked to this standard</p>
@@ -3043,7 +3127,7 @@ export default function CoursesView() {
               </div>
               <button
                 onClick={() => setIsManageProgramCoursesOpen(false)}
-                className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
+                className="p-2 sm:p-1.5 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -3063,10 +3147,10 @@ export default function CoursesView() {
 
               {/* SECTION: ASSIGN NEW / EXISTING COURSE */}
               <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-bold text-slate-800 dark:text-slate-200 text-xs flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="font-bold text-slate-800 dark:text-slate-200 text-xs flex items-center gap-1.5 min-w-0">
                     <Plus className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
-                    <span>Assign Course to {selectedProgram}</span>
+                    <span className="break-words min-w-0">Assign Course to {selectedProgram}</span>
                   </h4>
                   <button
                     type="button"
@@ -3083,11 +3167,11 @@ export default function CoursesView() {
                 {allAvailableCourses.filter(ac => !programLinkedCourses.some(pc => (pc.name || pc.course) === (ac.name || ac.course))).length === 0 ? (
                   <p className="text-[11px] text-slate-400 italic">All available courses are currently assigned to this standard.</p>
                 ) : (
-                  <div className="flex gap-2 items-center">
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
                     <select
                       value={selectedCourseToAssign}
                       onChange={(e) => setSelectedCourseToAssign(e.target.value)}
-                      className="flex-1 px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-hidden"
+                      className="flex-1 min-w-0 w-full sm:w-auto px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-hidden"
                     >
                       {allAvailableCourses
                         .filter(ac => !programLinkedCourses.some(pc => (pc.name || pc.course) === (ac.name || ac.course)))
@@ -3101,7 +3185,7 @@ export default function CoursesView() {
                       type="button"
                       disabled={manageCoursesLoading || !selectedCourseToAssign}
                       onClick={handleAssignCourseToProgram}
-                      className="px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50 shrink-0"
+                      className="px-3.5 py-2.5 sm:py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold transition shadow-xs flex items-center justify-center gap-1.5 disabled:opacity-50 shrink-0"
                     >
                       {manageCoursesLoading ? (
                         <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -3116,7 +3200,7 @@ export default function CoursesView() {
 
               {/* SECTION: CURRENTLY LINKED COURSES */}
               <div>
-                <h4 className="font-bold text-slate-700 dark:text-slate-300 mb-2 flex items-center justify-between">
+                <h4 className="font-bold text-slate-700 dark:text-slate-300 mb-2 flex flex-wrap items-center justify-between gap-2">
                   <span>Currently Assigned Courses</span>
                   <span className="text-[11px] font-normal text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
                     {programLinkedCourses.length} {programLinkedCourses.length === 1 ? 'Course' : 'Courses'}
@@ -3146,12 +3230,12 @@ export default function CoursesView() {
                               <p className="font-bold text-slate-900 dark:text-slate-100 truncate text-xs">
                                 {c.course_name || cName}
                               </p>
-                              <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-[10px] text-slate-400 font-mono">
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                                <span className="text-[11px] text-slate-400 font-mono break-all">
                                   {cName}
                                 </span>
                                 {c.department && (
-                                  <span className="text-[10px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.2 rounded-sm">
+                                  <span className="text-[11px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-1.5 py-px rounded-sm">
                                     {c.department}
                                   </span>
                                 )}
@@ -3163,7 +3247,7 @@ export default function CoursesView() {
                             type="button"
                             disabled={manageCoursesLoading}
                             onClick={() => handleRemoveCourseFromProgram(cName)}
-                            className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-transparent hover:border-rose-200 dark:hover:border-rose-800/50 transition shrink-0 disabled:opacity-40"
+                            className="p-2 sm:p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-transparent hover:border-rose-200 dark:hover:border-rose-800/50 transition shrink-0 disabled:opacity-40"
                             title={`Remove ${cName} from ${selectedProgram}`}
                           >
                             <Trash2 className="w-4 h-4" />
@@ -3180,7 +3264,7 @@ export default function CoursesView() {
               <button
                 type="button"
                 onClick={() => setIsManageProgramCoursesOpen(false)}
-                className="px-5 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 font-bold text-xs transition"
+                className="px-5 py-2.5 sm:py-2 rounded-xl bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 font-bold text-xs transition"
               >
                 Close
               </button>
@@ -3192,14 +3276,14 @@ export default function CoursesView() {
       {/* MODAL: CONFIRM DELETE / REMOVE COURSE FROM STANDARD */}
       {courseToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md my-auto overflow-hidden shadow-2xl">
-            <div className="p-5 pb-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-rose-50 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400 flex items-center justify-center shadow-xs">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md max-h-[90vh] flex flex-col my-auto overflow-hidden shadow-2xl">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-rose-50 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400 flex items-center justify-center shadow-xs shrink-0">
                   <Trash2 className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                <div className="min-w-0">
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 break-words">
                     Remove Course from {courseToDelete.program || selectedProgram}
                   </h3>
                   <p className="text-xs text-slate-400">Curriculum standard subject management</p>
@@ -3207,22 +3291,22 @@ export default function CoursesView() {
               </div>
               <button
                 onClick={() => setCourseToDelete(null)}
-                className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
+                className="p-2 sm:p-1.5 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-5 space-y-4 text-xs">
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-4 text-xs">
               {deleteCourseError && (
                 <div className="p-3 rounded-xl bg-rose-50 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 text-xs font-semibold border border-rose-200 dark:border-rose-800 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{deleteCourseError}</span>
+                  <span className="min-w-0 break-words">{deleteCourseError}</span>
                 </div>
               )}
 
               <div className="p-4 rounded-2xl bg-rose-50/50 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900/40">
-                <p className="font-semibold text-slate-800 dark:text-slate-200 leading-relaxed">
+                <p className="font-semibold text-slate-800 dark:text-slate-200 leading-relaxed break-words">
                   Are you sure you want to remove <span className="font-bold text-rose-600 dark:text-rose-400">"{courseToDelete.courseTitle}"</span> from <span className="font-bold text-slate-900 dark:text-slate-100">{courseToDelete.program || selectedProgram}</span>?
                 </p>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
@@ -3249,11 +3333,11 @@ export default function CoursesView() {
               </label>
             </div>
 
-            <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-2 shrink-0">
+            <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex flex-wrap items-center justify-end gap-2 shrink-0">
               <button
                 type="button"
                 onClick={() => setCourseToDelete(null)}
-                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                className="px-4 py-2.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
               >
                 Cancel
               </button>
@@ -3261,7 +3345,7 @@ export default function CoursesView() {
                 type="button"
                 disabled={deleteCourseSubmitting}
                 onClick={handleConfirmDeleteCourse}
-                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                className="px-5 py-2.5 sm:py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
               >
                 {deleteCourseSubmitting ? (
                   <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -3279,13 +3363,13 @@ export default function CoursesView() {
       {isCreateCourseOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-lg max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl">
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center shadow-xs">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center shadow-xs shrink-0">
                   <BookOpen className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                <div className="min-w-0">
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 break-words">
                     Create New Course / Subject
                   </h3>
                   <p className="text-xs text-slate-400">Add course syllabus to academic program</p>
@@ -3293,7 +3377,7 @@ export default function CoursesView() {
               </div>
               <button
                 onClick={() => setIsCreateCourseOpen(false)}
-                className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
+                className="p-2 sm:p-1.5 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -3304,14 +3388,14 @@ export default function CoursesView() {
                 {createCourseError && (
                   <div className="p-3 rounded-xl bg-rose-50 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 text-xs font-semibold border border-rose-200 dark:border-rose-800 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>{createCourseError}</span>
+                    <span className="min-w-0 break-words">{createCourseError}</span>
                   </div>
                 )}
 
                 {createCourseSuccess && (
                   <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 text-xs font-semibold border border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>{createCourseSuccess}</span>
+                    <span className="min-w-0 break-words">{createCourseSuccess}</span>
                   </div>
                 )}
 
@@ -3355,6 +3439,7 @@ export default function CoursesView() {
                     <input
                       type="text"
                       value={newCourseGradingScale}
+                      placeholder="Leave empty to use the default grading scale"
                       onChange={(e) => setNewCourseGradingScale(e.target.value)}
                       className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-medium focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-hidden"
                     />
@@ -3388,18 +3473,18 @@ export default function CoursesView() {
                 </div>
               </div>
 
-              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-2 shrink-0">
+              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex flex-wrap items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsCreateCourseOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  className="px-4 py-2.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={createCourseSubmitting}
-                  className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-5 py-2.5 sm:py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {createCourseSubmitting ? (
                     <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -3418,13 +3503,13 @@ export default function CoursesView() {
       {isQuickScheduleOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl">
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-xs">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-xs shrink-0">
                   <Calendar className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                <div className="min-w-0">
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 break-words">
                     Schedule Class Lecture
                   </h3>
                   <p className="text-xs text-slate-400">Register lecture session in timetable</p>
@@ -3432,7 +3517,7 @@ export default function CoursesView() {
               </div>
               <button
                 onClick={() => setIsQuickScheduleOpen(false)}
-                className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
+                className="p-2 sm:p-1.5 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -3443,14 +3528,14 @@ export default function CoursesView() {
                 {quickScheduleError && (
                   <div className="p-3 rounded-xl bg-rose-50 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 text-xs font-semibold border border-rose-200 dark:border-rose-800 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>{quickScheduleError}</span>
+                    <span className="min-w-0 break-words">{quickScheduleError}</span>
                   </div>
                 )}
 
                 {quickScheduleSuccess && (
                   <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 text-xs font-semibold border border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>{quickScheduleSuccess}</span>
+                    <span className="min-w-0 break-words">{quickScheduleSuccess}</span>
                   </div>
                 )}
 
@@ -3458,9 +3543,9 @@ export default function CoursesView() {
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Subject / Course <span className="text-rose-500">*</span>
                   </label>
-                  <div className="px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold flex items-center justify-between">
-                    <span>{scheduleFormData.course}</span>
-                    <span className="text-[10px] text-slate-400 uppercase font-mono">{selectedProgram}</span>
+                  <div className="px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
+                    <span className="break-words min-w-0">{scheduleFormData.course}</span>
+                    <span className="text-[11px] text-slate-400 uppercase font-mono break-all">{selectedProgram}</span>
                   </div>
                 </div>
 
@@ -3559,18 +3644,18 @@ export default function CoursesView() {
                 </div>
               </div>
 
-              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-2 shrink-0">
+              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex flex-wrap items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsQuickScheduleOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  className="px-4 py-2.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={quickScheduleSubmitting}
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-5 py-2.5 sm:py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {quickScheduleSubmitting ? (
                     <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -3589,13 +3674,13 @@ export default function CoursesView() {
       {isCreateYearOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl">
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-xs">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-xs shrink-0">
                   <Calendar className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                <div className="min-w-0">
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 break-words">
                     New Academic Year
                   </h3>
                   <p className="text-xs text-slate-400">Define an institutional academic calendar year</p>
@@ -3603,7 +3688,7 @@ export default function CoursesView() {
               </div>
               <button
                 onClick={() => setIsCreateYearOpen(false)}
-                className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
+                className="p-2 sm:p-1.5 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -3614,14 +3699,14 @@ export default function CoursesView() {
                 {createYearError && (
                   <div className="p-3 rounded-xl bg-rose-50 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 text-xs font-semibold border border-rose-200 dark:border-rose-800 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>{createYearError}</span>
+                    <span className="min-w-0 break-words">{createYearError}</span>
                   </div>
                 )}
 
                 {createYearSuccess && (
                   <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 text-xs font-semibold border border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>{createYearSuccess}</span>
+                    <span className="min-w-0 break-words">{createYearSuccess}</span>
                   </div>
                 )}
 
@@ -3631,14 +3716,14 @@ export default function CoursesView() {
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. 2029-2030"
+                    placeholder={`e.g. ${yearPresetBase}-${yearPresetBase + 1}`}
                     value={newYearData.academic_year_name}
                     onChange={(e) => setNewYearData({ ...newYearData, academic_year_name: e.target.value })}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-bold focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-hidden font-mono"
                     required
                   />
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    Standard format: YYYY-YYYY (e.g. 2029-2030)
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Standard format: YYYY-YYYY (e.g. {yearPresetBase}-{yearPresetBase + 1})
                   </p>
                 </div>
 
@@ -3671,48 +3756,32 @@ export default function CoursesView() {
                 </div>
 
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[10px] text-slate-400 font-semibold">Presets:</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewYearData({
-                        academic_year_name: '2029-2030',
-                        year_start_date: '2029-04-01',
-                        year_end_date: '2030-03-31',
-                      });
-                    }}
-                    className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-mono text-slate-600 dark:text-slate-300 hover:bg-slate-200"
-                  >
-                    2029-2030
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewYearData({
-                        academic_year_name: '2030-2031',
-                        year_start_date: '2030-04-01',
-                        year_end_date: '2031-03-31',
-                      });
-                    }}
-                    className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-mono text-slate-600 dark:text-slate-300 hover:bg-slate-200"
-                  >
-                    2030-2031
-                  </button>
+                  <span className="text-[11px] text-slate-400 font-semibold">Presets:</span>
+                  {[yearPresetBase, yearPresetBase + 1].map((startYear) => (
+                    <button
+                      key={startYear}
+                      type="button"
+                      onClick={() => setNewYearData(buildYearPreset(startYear))}
+                      className="px-2.5 py-1.5 sm:px-2 sm:py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[11px] font-mono text-slate-600 dark:text-slate-300 hover:bg-slate-200"
+                    >
+                      {startYear}-{startYear + 1}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-2 shrink-0">
+              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex flex-wrap items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsCreateYearOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 transition"
+                  className="px-4 py-2.5 sm:py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={createYearSubmitting}
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-brand-600 hover:from-indigo-700 hover:to-brand-700 text-white font-bold transition flex items-center gap-1.5 shadow-md shadow-indigo-500/20 disabled:opacity-50"
+                  className="px-5 py-2.5 sm:py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-brand-600 hover:from-indigo-700 hover:to-brand-700 text-white font-bold transition flex items-center gap-1.5 shadow-md shadow-indigo-500/20 disabled:opacity-50"
                 >
                   {createYearSubmitting ? (
                     <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -3731,13 +3800,13 @@ export default function CoursesView() {
       {isCreateTermOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl">
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-sky-50 dark:bg-sky-950/80 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-sky-50 dark:bg-sky-950/80 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs shrink-0">
                   <Clock className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                <div className="min-w-0">
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 break-words">
                     New Academic Term
                   </h3>
                   <p className="text-xs text-slate-400">Define a semester or period within an academic year</p>
@@ -3745,7 +3814,7 @@ export default function CoursesView() {
               </div>
               <button
                 onClick={() => setIsCreateTermOpen(false)}
-                className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition cursor-pointer"
+                className="p-2 sm:p-1.5 shrink-0 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -3756,14 +3825,14 @@ export default function CoursesView() {
                 {createTermError && (
                   <div className="p-3 rounded-xl bg-rose-50 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 text-xs font-semibold border border-rose-200 dark:border-rose-800 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>{createTermError}</span>
+                    <span className="min-w-0 break-words">{createTermError}</span>
                   </div>
                 )}
 
                 {createTermSuccess && (
                   <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 text-xs font-semibold border border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>{createTermSuccess}</span>
+                    <span className="min-w-0 break-words">{createTermSuccess}</span>
                   </div>
                 )}
 
@@ -3788,7 +3857,7 @@ export default function CoursesView() {
                   {(() => {
                     const y = availableAcademicYears.find((item) => item.name === newTermData.academic_year);
                     return y ? (
-                      <p className="text-[10px] text-slate-400 mt-1">
+                      <p className="text-[11px] text-slate-400 mt-1">
                         Calendar Period: {y.year_start_date} to {y.year_end_date}
                       </p>
                     ) : null;
@@ -3812,14 +3881,14 @@ export default function CoursesView() {
 
                 {/* Quick Preset Badges */}
                 <div className="space-y-1">
-                  <span className="text-[10px] text-slate-400 font-semibold block">Presets:</span>
+                  <span className="text-[11px] text-slate-400 font-semibold block">Presets:</span>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {['Term 1', 'Term 2', 'Semester 1', 'Semester 2', 'Summer Term'].map((preset) => (
                       <button
                         key={preset}
                         type="button"
                         onClick={() => applyTermPreset(preset)}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition ${
+                        className={`px-2.5 py-1.5 sm:py-1 rounded-lg text-[11px] font-bold border transition ${
                           newTermData.term_name === preset
                             ? 'bg-sky-500 text-white border-sky-500 shadow-xs'
                             : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200 cursor-pointer'
@@ -3871,8 +3940,8 @@ export default function CoursesView() {
 
                 {/* Live Preview Pill */}
                 <div className="p-2.5 rounded-xl bg-sky-50/70 dark:bg-sky-950/40 border border-sky-100 dark:border-sky-900/60 flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-semibold text-slate-400">Term ID Preview:</span>
-                  <span className="text-[11px] font-mono font-bold text-sky-700 dark:text-sky-300 truncate">
+                  <span className="text-[11px] font-semibold text-slate-400 shrink-0">Term ID Preview:</span>
+                  <span className="text-[11px] font-mono font-bold text-sky-700 dark:text-sky-300 truncate min-w-0">
                     {newTermData.academic_year && newTermData.term_name 
                       ? `${newTermData.academic_year} (${newTermData.term_name})`
                       : '—'}
@@ -3880,18 +3949,18 @@ export default function CoursesView() {
                 </div>
               </div>
 
-              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-2 shrink-0">
+              <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex flex-wrap items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsCreateTermOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 transition cursor-pointer"
+                  className="px-4 py-2.5 sm:py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={createTermSubmitting}
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 text-white font-bold transition flex items-center gap-1.5 shadow-md shadow-sky-500/20 disabled:opacity-50 cursor-pointer"
+                  className="px-5 py-2.5 sm:py-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 text-white font-bold transition flex items-center gap-1.5 shadow-md shadow-sky-500/20 disabled:opacity-50 cursor-pointer"
                 >
                   {createTermSubmitting ? (
                     <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />

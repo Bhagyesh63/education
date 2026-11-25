@@ -11,11 +11,106 @@ from education.education.api_modules.common import (
     _resolve_default_program,
     _get_program_enrollment,
     check_permission,
+    get_guardians_for_user,
+    is_guardian_of,
 )
 
 
-@frappe.whitelist(allow_guest=True)
+# ==============================================================================
+# Portal access helpers (role-scoped, read-only checks)
+# ==============================================================================
+
+STAFF_ROLES = (
+    "Instructor",
+    "Academics User",
+    "Education Manager",
+    "System Manager",
+    "Administrator",
+)
+
+
+def _is_staff(user=None):
+    user = user or frappe.session.user
+    if not user or user == "Guest":
+        return False
+    if user == "Administrator":
+        return True
+    return any(r in STAFF_ROLES for r in frappe.get_roles(user))
+
+
+def _require_login():
+    if frappe.session.user == "Guest":
+        frappe.throw(frappe._("Please log in to continue."), frappe.PermissionError)
+
+
+def _require_staff(message=None):
+    _require_login()
+    if not _is_staff():
+        frappe.throw(
+            message or frappe._("Only school staff can perform this action."),
+            frappe.PermissionError,
+        )
+
+
+def get_ward_ids(user=None):
+    """Students linked to the guardian record(s) of the given user."""
+    guardians = get_guardians_for_user(user)
+    if not guardians:
+        return []
+    return list(dict.fromkeys(frappe.get_all(
+        "Student Guardian",
+        filters={"parenttype": "Student", "guardian": ["in", guardians]},
+        pluck="parent",
+    )))
+
+
+def get_accessible_student_ids(user=None):
+    """Returns None for staff (unrestricted) or the explicit list of students the user may see."""
+    user = user or frappe.session.user
+    if not user or user == "Guest":
+        return []
+    if _is_staff(user):
+        return None
+    ids = []
+    own = frappe.db.get_value("Student", {"user": user}, "name")
+    if own:
+        ids.append(own)
+    for ward in get_ward_ids(user):
+        if ward not in ids:
+            ids.append(ward)
+    return ids
+
+
+def assert_can_view_student(student):
+    """Student: only self. Guardian: only linked wards. Staff: any student."""
+    _require_login()
+    if not student:
+        frappe.throw(frappe._("Student is required."))
+    user = frappe.session.user
+    if _is_staff(user):
+        return
+    if frappe.db.get_value("Student", student, "user") == user:
+        return
+    if is_guardian_of(student, user):
+        return
+    frappe.throw(
+        frappe._("You are not authorized to access this student's records."),
+        frappe.PermissionError,
+    )
+
+
+def _resolve_default_student():
+    """Student user -> own record; guardian -> first linked ward; otherwise None."""
+    own = _resolve_portal_student()
+    if own:
+        return own
+    wards = get_ward_ids()
+    return wards[0] if wards else None
+
+
+@frappe.whitelist()
 def get_current_enrollment(student: str, academic_year: str | None = None):
+    assert_can_view_student(student)
     compare_date = getdate(academic_year) if academic_year else getdate(today())
     program_enrollment_list = frappe.db.sql(
         """
@@ -38,19 +133,17 @@ def get_current_enrollment(student: str, academic_year: str | None = None):
     return program_enrollment_list[0] if program_enrollment_list else None
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_student_profile(student: str | None = None):
-    student = _resolve_portal_student(student) or student or "EDU-STU-2026-00001"
-    student_info = frappe.db.get_value(
-        "Student", student, PORTAL_STUDENT_FIELDS, as_dict=True
-    )
-    if not student_info:
-        # Fallback to first student if specific ID not found
-        first_stu = frappe.db.get_value("Student", {}, "name")
-        if first_stu:
-            student = first_stu
-            student_info = frappe.db.get_value("Student", student, PORTAL_STUDENT_FIELDS, as_dict=True)
+    _require_login()
+    student = student or _resolve_default_student()
+    if not student:
+        return None
+    assert_can_view_student(student)
 
+    student_info = frappe.db.get_value(
+        "Student", student, PORTAL_STUDENT_FIELDS + ["enabled"], as_dict=True
+    )
     if not student_info:
         return None
 
@@ -124,7 +217,7 @@ def get_student_profile(student: str | None = None):
     total_att = att_stats[0].get("total", 0) if att_stats else 0
     present_att = att_stats[0].get("present", 0) or 0 if att_stats else 0
     absent_att = att_stats[0].get("absent", 0) or 0 if att_stats else 0
-    pct_att = round((float(present_att) / float(total_att) * 100), 1) if total_att > 0 else 100.0
+    pct_att = round((float(present_att) / float(total_att) * 100), 1) if total_att > 0 else None
 
     # Recent student logs (achievements, medical, academic)
     recent_logs = []
@@ -157,8 +250,9 @@ def get_student_profile(student: str | None = None):
     }
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_student_directory(program=None, student_group=None):
+    _require_staff(frappe._("Only school staff can view the student directory."))
     students = frappe.get_all(
         "Student",
         fields=["name", "student_name", "student_email_id", "student_mobile_number", "joining_date", "gender", "blood_group", "enabled", "image"],
@@ -237,8 +331,9 @@ def get_student_directory(program=None, student_group=None):
     return result
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_enrollment_metadata():
+    _require_staff()
     programs = frappe.get_all("Program", fields=["name", "program_name", "program_abbreviation"], order_by="name asc")
     academic_years = frappe.get_all("Academic Year", fields=["name", "year_start_date", "year_end_date"], order_by="year_start_date desc")
     academic_terms = frappe.get_all("Academic Term", fields=["name", "academic_year", "term_name", "term_start_date", "term_end_date"], order_by="term_start_date desc")
@@ -251,8 +346,9 @@ def get_enrollment_metadata():
     }
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist(methods=["POST"])
 def enroll_student_in_program(student: str, program: str, academic_year: str, academic_term: str | None = None):
+    _require_staff()
     if not frappe.db.exists("Student", student):
         frappe.throw(frappe._("Student {0} does not exist.").format(student))
 
@@ -284,8 +380,9 @@ def enroll_student_in_program(student: str, program: str, academic_year: str, ac
     }
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist(methods=["POST"])
 def assign_student_to_group(student: str, student_group: str, roll_number: int | None = None):
+    _require_staff()
     if not frappe.db.exists("Student", student):
         frappe.throw(frappe._("Student {0} does not exist.").format(student))
     if not frappe.db.exists("Student Group", student_group):
@@ -316,14 +413,22 @@ def assign_student_to_group(student: str, student_group: str, roll_number: int |
     return {"status": "created", "student_group": student_group, "student": student}
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_program_context(student: str | None = None, program: str | None = None, academic_year: str | None = None, program_enrollment: str | None = None):
-    student = _resolve_portal_student(student) or student or "EDU-STU-2026-00001"
-    if not program and not program_enrollment:
-        program = "Standard 5"
+    _require_login()
+    student = student or _resolve_default_student()
+    if not student:
+        return {
+            "program": None,
+            "academic_year": None,
+            "program_enrollment": None,
+            "enrollment": None,
+            "student_groups": [],
+        }
+    assert_can_view_student(student)
 
     enrollment = _get_program_enrollment(student, program, academic_year=academic_year, program_enrollment=program_enrollment)
-    resolved_program = enrollment.get("program") if enrollment else (program or "Standard 5")
+    resolved_program = enrollment.get("program") if enrollment else program
     resolved_year = enrollment.get("academic_year") if enrollment else academic_year
 
     return {
@@ -336,8 +441,9 @@ def get_program_context(student: str | None = None, program: str | None = None, 
 
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_student_programs(student: str):
+    assert_can_view_student(student)
     programs = frappe.get_all(
         "Program Enrollment",
         fields=["program", "name"],
@@ -368,8 +474,19 @@ def get_student_guardians(student):
     )
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_student_group_students(student_group: str, include_inactive: bool = 0):
+    # Also used internally (attendance validation, assessments): staff see any roster,
+    # students / guardians only rosters of groups their own records belong to.
+    accessible = get_accessible_student_ids()
+    if accessible is not None and not frappe.db.exists(
+        "Student Group Student",
+        {"parent": student_group, "student": ["in", accessible or [""]]},
+    ):
+        frappe.throw(
+            frappe._("You are not authorized to view this student group."),
+            frappe.PermissionError,
+        )
     filters = {"parent": student_group}
     if not include_inactive:
         filters["active"] = 1
@@ -381,8 +498,9 @@ def get_student_group_students(student_group: str, include_inactive: bool = 0):
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def enroll_student(source_name: str):
+    _require_staff()
     frappe.publish_realtime(
         "enroll_student_progress", {"progress": [1, 4]}, user=frappe.session.user
     )
@@ -424,7 +542,7 @@ def enroll_student(source_name: str):
     return program_enrollment
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist(methods=["POST"])
 def bulk_enroll_students_in_program(
     students: list | str,
     program: str,
@@ -432,6 +550,7 @@ def bulk_enroll_students_in_program(
     academic_term: str | None = None,
     student_group: str | None = None,
 ):
+    _require_staff()
     import json
     if isinstance(students, str):
         try:
@@ -506,7 +625,7 @@ def bulk_enroll_students_in_program(
     }
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist(methods=["POST"])
 def create_student_group(
     student_group_name: str,
     academic_year: str,
@@ -518,6 +637,7 @@ def create_student_group(
     batch: str | None = None,
 ):
     """Creates a new Student Group / Section."""
+    _require_staff()
     if not student_group_name or not student_group_name.strip():
         frappe.throw(frappe._("Student Group Name is required."))
 
@@ -561,10 +681,25 @@ def create_student_group(
     }
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_all_student_groups(program: str | None = None, academic_year: str | None = None):
-    """Returns all Student Groups with enrolled student count."""
+    """Returns Student Groups with enrolled student count.
+
+    Staff see every group; students / guardians only the groups their own records belong to."""
+    _require_login()
     filters = {}
+    accessible = get_accessible_student_ids()
+    if accessible is not None:
+        if not accessible:
+            return []
+        member_groups = frappe.get_all(
+            "Student Group Student",
+            filters={"student": ["in", accessible]},
+            pluck="parent",
+        )
+        if not member_groups:
+            return []
+        filters["name"] = ["in", list(set(member_groups))]
     if program:
         filters["program"] = program
     if academic_year:
@@ -584,9 +719,10 @@ def get_all_student_groups(program: str | None = None, academic_year: str | None
     return groups
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_student_group_details(student_group: str):
     """Returns details, students roster, and instructors for a Student Group."""
+    _require_staff()
     if not frappe.db.exists("Student Group", student_group):
         frappe.throw(frappe._("Student Group '{0}' does not exist.").format(student_group))
 
@@ -622,10 +758,10 @@ def get_student_group_details(student_group: str):
     }
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist(methods=["POST"])
 def remove_student_from_group(student: str, student_group: str):
     """Removes or deactivates a student from a Student Group / Section."""
-    check_permission("Student Group", "write")
+    _require_staff()
 
     existing = frappe.db.exists("Student Group Student", {
         "parent": student_group,
@@ -639,11 +775,12 @@ def remove_student_from_group(student: str, student_group: str):
     return {"status": "removed", "student": student, "student_group": student_group}
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_student_course_enrollments(student: str):
     """Returns all Course Enrollments for a specific student."""
     if not student:
         return []
+    assert_can_view_student(student)
 
     return frappe.db.sql("""
         SELECT
@@ -663,11 +800,12 @@ def get_student_course_enrollments(student: str):
     """, (student,), as_dict=True)
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_available_courses_for_student(student: str):
     """Returns all courses that a student is eligible for but not yet enrolled in."""
     if not student:
         return {"available_courses": []}
+    assert_can_view_student(student)
 
     # Get student's current program
     prog_info = frappe.db.sql("""
@@ -719,10 +857,10 @@ def get_available_courses_for_student(student: str):
     }
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist(methods=["POST"])
 def enroll_student_in_course(student: str, course: str, program_enrollment: str | None = None):
     """Enrolls a student in a specific course (Elective or Program course)."""
-    check_permission("Course Enrollment", "create")
+    _require_staff()
 
     if not student or not frappe.db.exists("Student", student):
         frappe.throw(frappe._("Valid Student ID is required."))
@@ -770,10 +908,10 @@ def enroll_student_in_course(student: str, course: str, program_enrollment: str 
     }
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist(methods=["POST"])
 def drop_course_enrollment(enrollment_name: str):
     """Drops / deletes a course enrollment for a student."""
-    check_permission("Course Enrollment", "delete")
+    _require_staff()
 
     if not enrollment_name or not frappe.db.exists("Course Enrollment", enrollment_name):
         frappe.throw(frappe._("Course Enrollment {0} does not exist.").format(enrollment_name))

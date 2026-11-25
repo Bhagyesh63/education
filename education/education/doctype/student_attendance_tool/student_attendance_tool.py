@@ -17,6 +17,7 @@ def get_student_attendance_records(
     student_group: str | None = None,
     course_schedule: str | None = None,
 ):
+    frappe.has_permission("Student Attendance Tool", "read", throw=True)
     student_list = []
     student_attendance_list = []
 

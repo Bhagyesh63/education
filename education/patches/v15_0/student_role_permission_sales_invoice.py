@@ -9,7 +9,7 @@ def execute():
     doctype = "Sales Invoice"
     role = "Student"
     permlevel = 0
-    ptype = ["read", "write", "print"]
+    ptype = ["read", "print"]  # students may view/print their invoices, never edit them
 
     for p in ptype:
         # update permissions

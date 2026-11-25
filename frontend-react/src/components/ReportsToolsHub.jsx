@@ -1,10 +1,13 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { api } from '../api/frappeClient';
 import { 
   Calculator, 
   FileText, 
   UserCheck, 
   CalendarPlus, 
+  UserPlus,
   Users, 
   Clock, 
   ArrowRight, 
@@ -17,6 +20,24 @@ import {
 
 export default function ReportsToolsHub() {
   const navigate = useNavigate();
+  const { isStaff } = useAuth();
+
+  // Live counters from the backend (staff only)
+  const [summary, setSummary] = useState(null);
+  const [summaryError, setSummaryError] = useState('');
+  useEffect(() => {
+    if (!isStaff) return;
+    let cancelled = false;
+    api.getReportsToolsSummary()
+      .then((data) => { if (!cancelled) setSummary(data || null); })
+      .catch((err) => {
+        console.error('Failed to load reports & tools summary:', err);
+        if (!cancelled) setSummaryError(err.message || 'Live statistics unavailable');
+      });
+    return () => { cancelled = true; };
+  }, [isStaff]);
+
+  const liveStat = (fn, fallback) => (summary ? fn(summary) : (summaryError ? summaryError : fallback));
 
   const activeTools = [
     {
@@ -28,7 +49,10 @@ export default function ReportsToolsHub() {
       color: 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border-emerald-200/60 dark:border-emerald-800',
       path: '/assessment-tool',
       badge: 'Active & Verified',
-      stats: 'Supports single & batch evaluation',
+      stats: liveStat(
+        (d) => `${d.assessment_plans} plans · ${d.assessment_results_submitted} published · ${d.assessment_results_draft} draft`,
+        'Supports single & batch evaluation'
+      ),
     },
     {
       id: 'report-card-tool',
@@ -39,7 +63,10 @@ export default function ReportsToolsHub() {
       color: 'bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border-amber-200/60 dark:border-amber-800',
       path: '/report-card-tool',
       badge: 'Active & 1-Page Optimized',
-      stats: 'Single student & cohort PDF generation',
+      stats: liveStat(
+        (d) => `${d.students_with_results} students with published results`,
+        'Single student & cohort PDF generation'
+      ),
     },
     {
       id: 'attendance-tool',
@@ -50,7 +77,10 @@ export default function ReportsToolsHub() {
       color: 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border-blue-200/60 dark:border-blue-800',
       path: '/attendance-tool',
       badge: 'Active & Verified',
-      stats: 'Supports Group & Schedule modes',
+      stats: liveStat(
+        (d) => `Today: ${d.attendance_marked_today} marked in ${d.attendance_groups_today} groups · ${d.pending_leave_applications} leave pending`,
+        'Supports Group & Schedule modes'
+      ),
     },
     {
       id: 'course-scheduling-tool',
@@ -61,18 +91,42 @@ export default function ReportsToolsHub() {
       color: 'bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 border-purple-200/60 dark:border-purple-800',
       path: '/course-scheduling-tool',
       badge: 'Active & Verified',
-      stats: 'Automated recurring slot generator',
+      stats: liveStat(
+        (d) => `${d.upcoming_course_schedules} upcoming sessions · ${d.student_groups} groups`,
+        'Automated recurring slot generator'
+      ),
+    },
+    {
+      id: 'program-enrollment-tool',
+      title: 'Program Enrollment Tool',
+      category: 'Enrollment & Promotion',
+      description: 'Promote a whole class to the next standard or academic year, or admit approved applicants as students, in one run. Skips students already enrolled and reports every result.',
+      icon: UserPlus,
+      color: 'bg-teal-50 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400 border-teal-200/60 dark:border-teal-800',
+      path: '/program-enrollment-tool',
+      badge: 'New',
+      stats: liveStat(
+        (d) => `${d.program_enrollments} enrollments · ${d.approved_applicants} approved applicants waiting`,
+        'Bulk promotion & admission'
+      ),
+    },
+    {
+      id: 'student-group-tool',
+      title: 'Student Group Creation Tool',
+      category: 'Cohorts & Sections',
+      description: 'Create all section (batch) and subject (course) groups of a class in one go, filled with the enrolled students, with a suggested teacher, room and max strength per group.',
+      icon: Users,
+      color: 'bg-orange-50 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 border-orange-200/60 dark:border-orange-800',
+      path: '/student-group-tool',
+      badge: 'New',
+      stats: liveStat(
+        (d) => `${d.student_groups} active groups`,
+        'Batch & course groups in bulk'
+      ),
     },
   ];
 
   const upcomingTools = [
-    {
-      title: 'Student Group Creation Tool',
-      category: 'Cohorts & Sections',
-      description: 'Automated cohort and section splitter based on program capacity, batch naming rules, and student quotas.',
-      icon: Users,
-      status: 'Next in Pipeline',
-    },
     {
       title: 'Timetable Generator',
       category: 'Master Schedules',
@@ -90,18 +144,18 @@ export default function ReportsToolsHub() {
   ];
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-300">
+    <div className="space-y-6 sm:space-y-8 min-w-0 animate-in fade-in duration-300">
       {/* 1. Header Hero */}
-      <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-80 h-80 bg-brand-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="p-4 sm:p-8 rounded-2xl sm:rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-80 max-w-full h-80 bg-brand-500/5 rounded-full blur-3xl pointer-events-none" />
         
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-50 dark:bg-brand-950/70 text-brand-700 dark:text-brand-300 border border-brand-200/60 dark:border-brand-800 text-xs font-bold">
-              <FolderKanban className="w-3.5 h-3.5" />
-              <span>Frappe Education Desk Management</span>
+          <div className="space-y-2 min-w-0">
+            <div className="inline-flex max-w-full items-center gap-2 px-3 py-1 rounded-full bg-brand-50 dark:bg-brand-950/70 text-brand-700 dark:text-brand-300 border border-brand-200/60 dark:border-brand-800 text-xs font-bold">
+              <FolderKanban className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Frappe Education Desk Management</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
+            <h1 className="text-xl sm:text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
               Academic Reports &amp; Management Tools
             </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
@@ -109,10 +163,10 @@ export default function ReportsToolsHub() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             <div className="px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 text-center">
-              <span className="text-xl font-black text-brand-600 dark:text-brand-400 block font-mono">4</span>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ready Tools</span>
+              <span className="text-xl font-black text-brand-600 dark:text-brand-400 block font-mono">{activeTools.length}</span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Ready Tools</span>
             </div>
           </div>
         </div>
@@ -120,39 +174,39 @@ export default function ReportsToolsHub() {
 
       {/* 2. Active & Available Tools */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-brand-600" />
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100 flex items-center gap-2 min-w-0">
+            <Sparkles className="w-4 h-4 shrink-0 text-brand-600" />
             <span>Active Tools in Education</span>
           </h2>
           <span className="text-xs font-semibold text-slate-400">Ready for instant use</span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-5">
           {activeTools.map((tool) => {
             const Icon = tool.icon;
             return (
               <div
                 key={tool.id}
                 onClick={() => navigate(tool.path)}
-                className="group p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-brand-500/50 dark:hover:border-brand-500/50 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between"
+                className="group p-4 sm:p-6 min-w-0 rounded-2xl sm:rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-brand-500/50 dark:hover:border-brand-500/50 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between"
               >
                 <div className="space-y-4">
                   <div className="flex items-start justify-between gap-3">
-                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border font-black shadow-xs ${tool.color}`}>
+                    <div className={`w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center border font-black shadow-xs ${tool.color}`}>
                       <Icon className="w-6 h-6" />
                     </div>
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800 text-[11px] font-bold">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      {tool.badge}
+                    <span className="inline-flex min-w-0 items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800 text-[11px] font-bold">
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{tool.badge}</span>
                     </span>
                   </div>
 
                   <div className="space-y-1.5">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                    <span className="text-[11px] uppercase font-bold text-slate-400 tracking-wider">
                       {tool.category}
                     </span>
-                    <h3 className="text-lg font-black text-slate-900 dark:text-slate-100 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">
+                    <h3 className="text-base sm:text-lg font-black break-words text-slate-900 dark:text-slate-100 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">
                       {tool.title}
                     </h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
@@ -161,13 +215,13 @@ export default function ReportsToolsHub() {
                   </div>
                 </div>
 
-                <div className="pt-5 mt-5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-slate-400 font-mono">
+                <div className="pt-4 mt-4 sm:pt-5 sm:mt-5 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                  <span className="min-w-0 flex-1 basis-40 text-[11px] font-semibold text-slate-400 font-mono break-words">
                     {tool.stats}
                   </span>
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 dark:bg-slate-800 hover:bg-brand-600 dark:hover:bg-brand-600 text-white text-xs font-bold transition shadow-xs group-hover:translate-x-0.5"
+                    className="shrink-0 min-h-[36px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 dark:bg-slate-800 hover:bg-brand-600 dark:hover:bg-brand-600 text-white text-xs font-bold transition shadow-xs group-hover:translate-x-0.5"
                   >
                     <span>Open Tool</span>
                     <ArrowRight className="w-3.5 h-3.5" />
@@ -181,9 +235,9 @@ export default function ReportsToolsHub() {
 
       {/* 3. Upcoming Frappe Education Tools & Reports */}
       <div className="space-y-4 pt-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <Clock3 className="w-4 h-4 text-slate-400" />
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100 flex items-start sm:items-center gap-2 min-w-0">
+            <Clock3 className="w-4 h-4 shrink-0 mt-0.5 sm:mt-0 text-slate-400" />
             <span>Upcoming Tools &amp; Query Reports in frappe/education</span>
           </h2>
           <span className="text-xs text-slate-400">Scheduled for implementation</span>
@@ -195,14 +249,14 @@ export default function ReportsToolsHub() {
             return (
               <div 
                 key={idx} 
-                className="p-5 rounded-2xl bg-slate-50/70 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-800/60 flex flex-col justify-between opacity-80 hover:opacity-100 transition-opacity"
+                className="p-4 sm:p-5 min-w-0 rounded-2xl bg-slate-50/70 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-800/60 flex flex-col justify-between opacity-80 hover:opacity-100 transition-opacity"
               >
                 <div className="space-y-2.5">
                   <div className="w-9 h-9 rounded-xl bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center shadow-xs">
                     <Icon className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">
+                    <span className="text-[11px] uppercase font-bold text-slate-400 block tracking-wider">
                       {t.category}
                     </span>
                     <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 mt-0.5">
@@ -215,7 +269,7 @@ export default function ReportsToolsHub() {
                 </div>
 
                 <div className="pt-3 mt-3 border-t border-slate-200/50 dark:border-slate-800/50 flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/60 px-2 py-0.5 rounded-md">
+                  <span className="text-[11px] font-bold text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/60 px-2 py-0.5 rounded-md">
                     {t.status}
                   </span>
                 </div>

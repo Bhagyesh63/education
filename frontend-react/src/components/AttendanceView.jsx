@@ -1,3 +1,4 @@
+import { todayISO } from '../utils/date';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   UserCheck, 
@@ -39,7 +40,9 @@ export default function AttendanceView({ onOpenLeaveModal }) {
   } = useAuth();
 
   const isTeacher = isStaff || isInstructor || isAdmin;
-  const currentStudentId = isTeacher ? null : (activeStudentId || studentProfile?.name || 'EDU-STU-2026-00001');
+  const currentStudentId = isTeacher ? null : (activeStudentId || studentProfile?.name || null);
+  // Portal users (student / guardian) must have a resolved student before we query records
+  const awaitingStudent = !isTeacher && !currentStudentId;
 
   const [selectedGroup, setSelectedGroup] = useState('all');
   const [activeTab, setActiveTab] = useState('attendance'); // 'attendance' | 'holidays' | 'leaves'
@@ -54,10 +57,13 @@ export default function AttendanceView({ onOpenLeaveModal }) {
   const [holidaysLoading, setHolidaysLoading] = useState(true);
   const [approvingId, setApprovingId] = useState(null);
   const [fetchedGroups, setFetchedGroups] = useState([]);
+  const [attendanceError, setAttendanceError] = useState('');
+  const [leavesError, setLeavesError] = useState('');
+  const [holidaysError, setHolidaysError] = useState('');
 
   // Mark Attendance Modal state (Teacher / Staff feature)
   const [isMarkModalOpen, setIsMarkModalOpen] = useState(false);
-  const [markingDate, setMarkingDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [markingDate, setMarkingDate] = useState(() => todayISO());
   const [markingGroup, setMarkingGroup] = useState('');
   const [roster, setRoster] = useState([]);
   const [rosterLoading, setRosterLoading] = useState(false);
@@ -79,11 +85,10 @@ export default function AttendanceView({ onOpenLeaveModal }) {
     }
   }, []);
 
-  // Groups list
+  // Groups list (only real Student Groups from the backend / portal context)
   const availableGroups = useMemo(() => {
-    const defaultList = ['Standard 5 - Section A', 'Standard 6 - Section A'];
-    const authList = (studentGroups || []).map(g => g.label || g.name || g);
-    return Array.from(new Set([...defaultList, ...authList, ...fetchedGroups])).filter(Boolean);
+    const authList = (studentGroups || []).map(g => (typeof g === 'string' ? g : (g.label || g.name)));
+    return Array.from(new Set([...authList, ...fetchedGroups])).filter(Boolean);
   }, [studentGroups, fetchedGroups]);
 
   useEffect(() => {
@@ -93,27 +98,41 @@ export default function AttendanceView({ onOpenLeaveModal }) {
   }, [availableGroups, markingGroup]);
 
   const fetchAttendance = () => {
+    if (awaitingStudent) {
+      setRecords([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
+    setAttendanceError('');
     api.getStudentAttendance(currentStudentId, selectedGroup || 'all')
       .then((data) => {
-        setRecords(data || []);
+        setRecords(Array.isArray(data) ? data : []);
       })
       .catch((err) => {
         console.error('Error fetching student attendance:', err);
         setRecords([]);
+        setAttendanceError(err.message || 'Unable to load attendance records.');
       })
       .finally(() => setLoading(false));
   };
 
   const fetchLeaves = () => {
+    if (awaitingStudent) {
+      setLeaves([]);
+      setLeavesLoading(false);
+      return Promise.resolve();
+    }
     setLeavesLoading(true);
-    api.getStudentLeaves(currentStudentId)
+    setLeavesError('');
+    return api.getStudentLeaves(currentStudentId)
       .then((data) => {
-        setLeaves(data || []);
+        setLeaves(Array.isArray(data) ? data : []);
       })
       .catch((err) => {
         console.error('Error fetching student leaves:', err);
         setLeaves([]);
+        setLeavesError(err.message || 'Unable to load leave applications.');
       })
       .finally(() => setLeavesLoading(false));
   };
@@ -126,15 +145,26 @@ export default function AttendanceView({ onOpenLeaveModal }) {
     fetchLeaves();
   }, [currentStudentId, isTeacher]);
 
+  // Refresh after a leave application is filed from the global LeaveModal
+  useEffect(() => {
+    const onLeaveApplied = () => {
+      fetchLeaves();
+    };
+    window.addEventListener('edu:leave-applied', onLeaveApplied);
+    return () => window.removeEventListener('edu:leave-applied', onLeaveApplied);
+  }, [currentStudentId, isTeacher]);
+
   useEffect(() => {
     setHolidaysLoading(true);
+    setHolidaysError('');
     api.getSchoolHolidays()
       .then((data) => {
-        setHolidays(data || []);
+        setHolidays(Array.isArray(data) ? data : []);
       })
       .catch((err) => {
         console.error('Error fetching holidays:', err);
         setHolidays([]);
+        setHolidaysError(err.message || 'Unable to load the school holiday calendar.');
       })
       .finally(() => setHolidaysLoading(false));
   }, []);
@@ -218,12 +248,30 @@ export default function AttendanceView({ onOpenLeaveModal }) {
     }
   };
 
+  // Holidays are interleaved into the log only within the span covered by real attendance records
+  const recordWindow = useMemo(() => {
+    const dates = records.map(r => String(r.date || r.attendance_date || '')).filter(Boolean).sort();
+    if (dates.length === 0) return null;
+    const todayStr = todayISO();
+    return { from: dates[0], to: dates[dates.length - 1] > todayStr ? dates[dates.length - 1] : todayStr };
+  }, [records]);
+
+  const holidayListInfo = useMemo(() => {
+    const first = holidays[0];
+    if (!first) return null;
+    return {
+      name: first.holiday_list,
+      from: first.list_from_date ? String(first.list_from_date) : null,
+      to: first.list_to_date ? String(first.list_to_date) : null,
+    };
+  }, [holidays]);
+
   const combinedLogs = useMemo(() => {
     let list = records.map(r => ({ ...r, type: 'session' }));
-    if (showHolidaysInLog && holidays.length > 0 && !isTeacher) {
+    if (showHolidaysInLog && holidays.length > 0 && !isTeacher && recordWindow) {
       holidays.forEach(h => {
         const hDate = String(h.holiday_date);
-        if (hDate >= '2026-09-01' && hDate <= '2026-10-31') {
+        if (hDate >= recordWindow.from && hDate <= recordWindow.to) {
           list.push({
             date: hDate,
             attendance_date: hDate,
@@ -247,7 +295,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
     }
 
     return list.sort((a, b) => (b.date || b.attendance_date || '').localeCompare(a.date || a.attendance_date || ''));
-  }, [records, holidays, showHolidaysInLog, isTeacher, logSearch]);
+  }, [records, holidays, showHolidaysInLog, isTeacher, logSearch, recordWindow]);
 
   const handleApproveLeave = async (leaveId) => {
     setApprovingId(leaveId);
@@ -267,7 +315,8 @@ export default function AttendanceView({ onOpenLeaveModal }) {
   const total = records.length;
   const present = records.filter(r => r.status === 'Present').length;
   const absent = records.filter(r => r.status === 'Absent').length;
-  const rate = total > 0 ? Math.round((present / total) * 100) : 100;
+  const rate = total > 0 ? Math.round((present / total) * 100) : null;
+  const pendingLeaves = leaves.filter(l => l.docstatus === 0).length;
 
   // Filter roster by search
   const filteredRoster = useMemo(() => {
@@ -303,7 +352,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                 }`}
               >
                 <span>{w.student_name}</span>
-                <span className="text-[10px] opacity-75">({w.relation || 'Ward'})</span>
+                <span className="text-[11px] opacity-75">({w.relation || 'Ward'})</span>
               </button>
             );
           })}
@@ -311,9 +360,9 @@ export default function AttendanceView({ onOpenLeaveModal }) {
       )}
 
       {/* Top Banner & Quick Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1 basis-[260px]">
+          <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight break-words">
             {isTeacher ? 'Student Attendance & Leave Register' : 'Attendance & Leave Records'}
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -323,14 +372,14 @@ export default function AttendanceView({ onOpenLeaveModal }) {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
           {/* Student Group Filter */}
           {availableGroups.length > 0 && (
-            <div className="relative">
+            <div className="relative flex-1 min-w-0 sm:flex-none">
               <select
                 value={selectedGroup}
                 onChange={(e) => setSelectedGroup(e.target.value)}
-                className="appearance-none bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 py-2 pl-3.5 pr-8 rounded-xl shadow-xs focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                className="w-full sm:w-auto max-w-full min-h-[36px] appearance-none bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 py-2 pl-3.5 pr-8 rounded-xl shadow-xs focus:outline-none focus:ring-2 focus:ring-brand-500/20"
               >
                 <option value="all">All Cohorts & Sections</option>
                 {availableGroups.map((grpName, idx) => (
@@ -345,54 +394,61 @@ export default function AttendanceView({ onOpenLeaveModal }) {
           {isTeacher && (
             <button
               onClick={openMarkModal}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-brand-600 dark:hover:bg-brand-500 text-white text-xs font-semibold shadow-xs transition active:scale-95"
+              className="flex items-center justify-center gap-2 px-4 py-2 min-h-[36px] flex-1 sm:flex-none whitespace-nowrap rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-brand-600 dark:hover:bg-brand-500 text-white text-xs font-semibold shadow-xs transition active:scale-95"
             >
               <UserCheck className="w-4 h-4 text-emerald-400 dark:text-white" />
               <span>Mark Attendance</span>
             </button>
           )}
 
-          <button
-            onClick={onOpenLeaveModal}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-xs transition active:scale-95"
-          >
-            <PlusCircle className="w-4 h-4" />
-            <span>Apply for Leave</span>
-          </button>
+          {!isTeacher && (
+            <button
+              onClick={onOpenLeaveModal}
+              disabled={awaitingStudent}
+              className="flex items-center justify-center gap-2 px-4 py-2 min-h-[36px] flex-1 sm:flex-none whitespace-nowrap rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-xs transition active:scale-95 disabled:opacity-50"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>Apply for Leave</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* Summary KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">
+          <span className="block text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase break-words">
             {isTeacher ? 'Overall Cohort Rate' : 'Attendance Rate'}
           </span>
-          <div className="mt-2 text-2xl font-black text-brand-600 dark:text-brand-400">{rate}%</div>
+          <div className="mt-2 text-2xl font-black text-brand-600 dark:text-brand-400">
+            {loading ? '…' : rate === null ? '—' : `${rate}%`}
+          </div>
           <div className="mt-1.5 w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
             <div 
               className="bg-brand-600 dark:bg-brand-500 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${rate}%` }} 
+              style={{ width: `${rate || 0}%` }} 
             />
           </div>
         </div>
 
         <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Present</span>
+          <span className="block text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase break-words">Present</span>
           <div className="mt-2 text-2xl font-black text-emerald-600 dark:text-emerald-400">{present}</div>
           <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Sessions recorded</p>
         </div>
 
         <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Absent</span>
+          <span className="block text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase break-words">Absent</span>
           <div className="mt-2 text-2xl font-black text-rose-600 dark:text-rose-400">{absent}</div>
           <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Unexcused missed</p>
         </div>
 
         <div className="glass-panel p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Active Leaves</span>
+          <span className="block text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase break-words">Leave Applications</span>
           <div className="mt-2 text-2xl font-black text-sky-600 dark:text-sky-400">{leaves.length}</div>
-          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Applications logged</p>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+            {pendingLeaves > 0 ? `${pendingLeaves} pending approval` : 'Applications logged'}
+          </p>
         </div>
       </div>
 
@@ -408,7 +464,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
         >
           <UserCheck className="w-4 h-4" />
           <span>Session Attendance Logs</span>
-          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeTab === 'attendance' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+          <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${activeTab === 'attendance' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
             {combinedLogs.length}
           </span>
         </button>
@@ -423,7 +479,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
         >
           <Calendar className="w-4 h-4" />
           <span>School Holidays</span>
-          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeTab === 'holidays' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+          <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${activeTab === 'holidays' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
             {holidays.length}
           </span>
         </button>
@@ -438,7 +494,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
         >
           <FileText className="w-4 h-4" />
           <span>Leave Applications History</span>
-          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeTab === 'leaves' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+          <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${activeTab === 'leaves' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
             {leaves.length}
           </span>
         </button>
@@ -447,8 +503,8 @@ export default function AttendanceView({ onOpenLeaveModal }) {
       {/* Tab Content: Session Attendance Logs */}
       {activeTab === 'attendance' && (
         <div className="glass-panel rounded-3xl border border-slate-200/80 dark:border-slate-800 overflow-hidden shadow-xs">
-          <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
+          <div className="px-4 sm:px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="min-w-0">
               <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Daily Session Logs</h3>
               <p className="text-[11px] text-slate-400 dark:text-slate-500">
                 {isTeacher 
@@ -459,7 +515,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
               </p>
             </div>
             
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
               <div className="relative w-full sm:w-64">
                 <input
                   type="text"
@@ -478,6 +534,16 @@ export default function AttendanceView({ onOpenLeaveModal }) {
               <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
               Loading attendance records...
             </div>
+          ) : attendanceError ? (
+            <div className="p-12 text-center text-rose-600 dark:text-rose-400 text-xs flex flex-col items-center gap-2">
+              <AlertTriangle className="w-5 h-5" />
+              <span>{attendanceError}</span>
+              <button onClick={fetchAttendance} className="mt-1 px-3 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 font-semibold">Retry</button>
+            </div>
+          ) : awaitingStudent ? (
+            <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs">
+              No student profile is linked to this account yet.
+            </div>
           ) : combinedLogs.length === 0 ? (
             <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs">
               No session attendance logs found for this selection.
@@ -491,8 +557,8 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                 const isLeave = row.status === 'Leave';
 
                 return (
-                  <div key={idx} className="px-6 py-3.5 flex items-center justify-between hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
-                    <div className="flex items-center gap-3">
+                  <div key={idx} className="px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
                         isHoliday ? 'bg-sky-50 dark:bg-sky-950/80 text-sky-600 dark:text-sky-400' :
                         isPresent ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400' :
@@ -503,28 +569,28 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                          isAbsent ? <UserX className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
                       </div>
 
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-x-2 gap-y-1 flex-wrap">
+                          <p className="text-xs font-bold text-slate-900 dark:text-slate-100 break-words min-w-0">
                             {isTeacher && row.student_name 
                               ? `${row.student_name} (${row.student})` 
                               : (row.title || row.course || (isHoliday ? 'School Holiday' : 'Scheduled Session'))}
                           </p>
                           {isTeacher && row.student_group && (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 break-words">
                               {row.student_group}
                             </span>
                           )}
                         </div>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
-                          <Calendar className="w-3 h-3 text-slate-400 dark:text-slate-500" />
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center flex-wrap gap-x-1 gap-y-0.5 mt-0.5">
+                          <Calendar className="w-3 h-3 text-slate-400 dark:text-slate-500 shrink-0" />
                           <span>Date: {row.date || row.attendance_date}</span>
-                          {row.name && <span className="opacity-75 font-mono text-[10px]">· {row.name}</span>}
+                          {row.name && <span className="opacity-75 font-mono text-[11px] break-all">· {row.name}</span>}
                         </p>
                       </div>
                     </div>
 
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+                    <span className={`shrink-0 px-2.5 sm:px-3 py-1 rounded-full text-[11px] sm:text-xs font-bold uppercase tracking-wider ${
                       isHoliday ? 'bg-sky-50 text-sky-700 dark:bg-sky-950/80 dark:text-sky-300 border border-sky-200/60 dark:border-sky-800' :
                       isPresent ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800' :
                       isAbsent ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/80 dark:text-rose-400 border border-rose-200/60 dark:border-rose-800' :
@@ -543,11 +609,13 @@ export default function AttendanceView({ onOpenLeaveModal }) {
       {/* Tab Content: Academic Holidays */}
       {activeTab === 'holidays' && (
         <div className="glass-panel rounded-3xl border border-slate-200/80 dark:border-slate-800 overflow-hidden shadow-xs">
-          <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
+          <div className="px-4 sm:px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="min-w-0">
               <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Official Academic Holidays</h3>
               <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                School calendar holidays for Academic Year 2026–2027
+                {holidayListInfo
+                  ? `${holidayListInfo.name}${holidayListInfo.from && holidayListInfo.to ? ` · ${holidayListInfo.from} to ${holidayListInfo.to}` : ''}`
+                  : 'School calendar holidays from the configured Holiday List'}
               </p>
             </div>
             <div className="relative w-full sm:w-64">
@@ -566,6 +634,10 @@ export default function AttendanceView({ onOpenLeaveModal }) {
               <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
               Loading school calendar holidays...
             </div>
+          ) : holidaysError ? (
+            <div className="p-12 text-center text-rose-600 dark:text-rose-400 text-xs">
+              {holidaysError}
+            </div>
           ) : holidays.length === 0 ? (
             <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs">
               No school holidays configured in the academic calendar.
@@ -582,13 +654,13 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                   );
                 })
                 .map((h, idx) => (
-                  <div key={idx} className="px-6 py-3.5 flex items-center justify-between hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
-                    <div className="flex items-center gap-3">
+                  <div key={idx} className="px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-sky-50 dark:bg-sky-950/80 text-sky-600 dark:text-sky-400">
                         <Calendar className="w-4 h-4" />
                       </div>
-                      <div>
-                        <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-900 dark:text-slate-100 break-words">
                           {h.description}
                         </p>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
@@ -597,7 +669,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                         </p>
                       </div>
                     </div>
-                    <span className="px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-sky-50 text-sky-700 dark:bg-sky-950/80 dark:text-sky-300 border border-sky-200/60 dark:border-sky-800">
+                    <span className="shrink-0 px-2.5 sm:px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider text-center bg-sky-50 text-sky-700 dark:bg-sky-950/80 dark:text-sky-300 border border-sky-200/60 dark:border-sky-800">
                       School Holiday
                     </span>
                   </div>
@@ -610,12 +682,12 @@ export default function AttendanceView({ onOpenLeaveModal }) {
       {/* Tab Content: Leave Applications History */}
       {activeTab === 'leaves' && (
         <div className="glass-panel rounded-3xl border border-slate-200/80 dark:border-slate-800 overflow-hidden shadow-xs">
-          <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-            <div>
+          <div className="px-4 sm:px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
               <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Student Leave Applications</h3>
               <p className="text-[11px] text-slate-400 dark:text-slate-500">Official requests filed by students</p>
             </div>
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">{leaves.length} applications</span>
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium shrink-0">{leaves.length} applications</span>
           </div>
 
           {leavesLoading ? (
@@ -623,9 +695,15 @@ export default function AttendanceView({ onOpenLeaveModal }) {
               <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
               Loading leave applications...
             </div>
+          ) : leavesError ? (
+            <div className="p-12 text-center text-rose-600 dark:text-rose-400 text-xs">
+              {leavesError}
+            </div>
           ) : leaves.length === 0 ? (
             <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs">
-              No leave applications submitted yet. Click "Apply for Leave" above to request absence.
+              {isTeacher
+                ? 'No leave applications have been filed.'
+                : 'No leave applications submitted yet. Click "Apply for Leave" above to request absence.'}
             </div>
           ) : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -635,13 +713,13 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                 const isCancelled = leave.docstatus === 2;
 
                 return (
-                  <div key={leave.name || idx} className="p-5 hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="space-y-1.5">
+                  <div key={leave.name || idx} className="p-4 sm:p-5 hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1.5 min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-xs font-bold text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/80 px-2.5 py-0.5 rounded-md border border-brand-200/60 dark:border-brand-800">
+                        <span className="font-mono text-xs font-bold text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/80 px-2.5 py-0.5 rounded-md border border-brand-200/60 dark:border-brand-800 break-all">
                           {leave.name}
                         </span>
-                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 break-words min-w-0">
                           {leave.student_name || leave.student}
                         </span>
                         <span className="text-[11px] text-slate-400 dark:text-slate-500">
@@ -649,7 +727,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-4 text-xs text-slate-600 dark:text-slate-300">
+                      <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-300">
                         <div className="flex items-center gap-1">
                           <Calendar className="w-3.5 h-3.5 text-slate-400" />
                           <span>From: <strong className="text-slate-800 dark:text-slate-200">{leave.from_date}</strong></span>
@@ -660,13 +738,13 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                         </div>
                       </div>
 
-                      <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-xs text-slate-700 dark:text-slate-300">
+                      <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-xs text-slate-700 dark:text-slate-300 break-words">
                         <span className="font-semibold text-slate-500 dark:text-slate-400">Reason: </span>
                         {leave.reason || 'Not specified'}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 shrink-0 sm:self-center">
+                    <div className="flex items-center flex-wrap gap-2 sm:gap-3 shrink-0 sm:self-center">
                       <span className={`px-3 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 ${
                         isApproved
                           ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
@@ -685,7 +763,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                         <button
                           onClick={() => handleApproveLeave(leave.name)}
                           disabled={approvingId === leave.name}
-                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition active:scale-95 disabled:opacity-50"
+                          className="px-3 py-1.5 min-h-[36px] sm:min-h-0 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 disabled:opacity-50"
                         >
                           <Check className="w-3.5 h-3.5" />
                           <span>{approvingId === leave.name ? 'Approving...' : 'Approve'}</span>
@@ -705,13 +783,13 @@ export default function AttendanceView({ onOpenLeaveModal }) {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
           <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col my-auto overflow-hidden shadow-2xl border border-slate-100 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
-            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            <div className="p-4 sm:p-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 flex items-start sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
                 <div className="w-10 h-10 rounded-2xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center shrink-0">
                   <UserCheck className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="font-extrabold text-base text-slate-900 dark:text-slate-100">
+                <div className="min-w-0">
+                  <h3 className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-slate-100 break-words">
                     Mark Class Attendance Register
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -722,7 +800,8 @@ export default function AttendanceView({ onOpenLeaveModal }) {
 
               <button
                 onClick={() => setIsMarkModalOpen(false)}
-                className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 flex items-center justify-center transition"
+                aria-label="Close"
+                className="w-9 h-9 sm:w-8 sm:h-8 shrink-0 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 flex items-center justify-center transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -770,12 +849,12 @@ export default function AttendanceView({ onOpenLeaveModal }) {
 
               {/* Quick Batch Bar and Stats */}
               <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Quick Actions:</span>
+                <div className="flex items-center flex-wrap gap-2">
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 w-full sm:w-auto">Quick Actions:</span>
                   <button
                     type="button"
                     onClick={() => handleMarkAll('Present')}
-                    className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-950/80 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-xs font-semibold flex items-center gap-1 transition"
+                    className="px-2.5 py-1 min-h-[36px] sm:min-h-0 flex-1 sm:flex-none justify-center rounded-lg bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-950/80 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-xs font-semibold flex items-center gap-1 transition"
                   >
                     <CheckCheck className="w-3.5 h-3.5" />
                     <span>All Present</span>
@@ -783,14 +862,14 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                   <button
                     type="button"
                     onClick={() => handleMarkAll('Absent')}
-                    className="px-2.5 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/80 dark:hover:bg-rose-900 text-rose-800 dark:text-rose-300 text-xs font-semibold flex items-center gap-1 transition"
+                    className="px-2.5 py-1 min-h-[36px] sm:min-h-0 flex-1 sm:flex-none justify-center rounded-lg bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/80 dark:hover:bg-rose-900 text-rose-800 dark:text-rose-300 text-xs font-semibold flex items-center gap-1 transition"
                   >
                     <XCircle className="w-3.5 h-3.5" />
                     <span>All Absent</span>
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2 text-xs font-semibold">
+                <div className="flex items-center flex-wrap gap-2 text-xs font-semibold">
                   <span className="text-emerald-600 dark:text-emerald-400">{modalPresentCount} Present</span>
                   <span className="text-slate-300 dark:text-slate-700">•</span>
                   <span className="text-rose-600 dark:text-rose-400">{modalAbsentCount} Absent</span>
@@ -810,7 +889,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                   value={rosterSearch}
                   onChange={(e) => setRosterSearch(e.target.value)}
                   placeholder="Filter by student name or roll number..."
-                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-8 pr-3 py-2 sm:py-1.5 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
                 />
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -835,7 +914,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                     return (
                       <div
                         key={s.student}
-                        className="py-3 px-1 flex items-center justify-between gap-3 hover:bg-slate-50/60 dark:hover:bg-slate-800/40 rounded-xl transition"
+                        className="py-3 px-1 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 hover:bg-slate-50/60 dark:hover:bg-slate-800/40 rounded-xl transition"
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="w-8 h-8 rounded-full bg-brand-100 dark:bg-brand-950/80 text-brand-700 dark:text-brand-300 font-semibold text-xs flex items-center justify-center shrink-0">
@@ -847,15 +926,15 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                               <span className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">
                                 {s.student_name}
                               </span>
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 dark:bg-slate-800 text-slate-500">
+                              <span className="px-1.5 py-0.5 rounded text-[11px] font-mono bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">
                                 #{s.group_roll_number || '–'}
                               </span>
                             </div>
 
-                            <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                              <span>{s.student}</span>
+                            <div className="flex items-center flex-wrap gap-x-2 gap-y-1 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                              <span className="break-all">{s.student}</span>
                               {s.on_leave && (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                <span className="px-1.5 py-0.5 rounded text-[11px] font-semibold bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 break-words">
                                   Approved Leave {s.leave_reason ? `(${s.leave_reason})` : ''}
                                 </span>
                               )}
@@ -864,11 +943,11 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                         </div>
 
                         {/* Status Toggle Buttons */}
-                        <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto">
                           <button
                             type="button"
                             onClick={() => handleToggleStudent(s.student, 'Present')}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                            className={`px-3 py-1.5 min-h-[36px] sm:min-h-0 flex-1 sm:flex-none justify-center rounded-xl text-xs font-bold transition flex items-center gap-1 ${
                               isPresent
                                 ? 'bg-emerald-600 text-white shadow-xs'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -881,7 +960,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                           <button
                             type="button"
                             onClick={() => handleToggleStudent(s.student, 'Absent')}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                            className={`px-3 py-1.5 min-h-[36px] sm:min-h-0 flex-1 sm:flex-none justify-center rounded-xl text-xs font-bold transition flex items-center gap-1 ${
                               isAbsent
                                 ? 'bg-rose-600 text-white shadow-xs'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -892,7 +971,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                           </button>
 
                           {isLeave && (
-                            <span className="px-2.5 py-1 rounded-xl text-xs font-bold bg-amber-500 text-white shadow-xs">
+                            <span className="px-2.5 py-1 rounded-xl text-xs font-bold bg-amber-500 text-white shadow-xs shrink-0">
                               Leave
                             </span>
                           )}
@@ -905,7 +984,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
 
               {/* Success message banner */}
               {saveSuccessMsg && (
-                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 rounded-xl text-emerald-800 dark:text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 rounded-xl text-emerald-800 dark:text-emerald-300 text-xs font-semibold flex items-center gap-2 break-words">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span>{saveSuccessMsg}</span>
                 </div>
@@ -913,11 +992,11 @@ export default function AttendanceView({ onOpenLeaveModal }) {
             </div>
 
             {/* Modal Bottom Actions */}
-            <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-3 shrink-0">
+            <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 sm:gap-3 shrink-0">
               <button
                 type="button"
                 onClick={() => setIsMarkModalOpen(false)}
-                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                className="w-full sm:w-auto min-h-[36px] px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
               >
                 Cancel
               </button>
@@ -926,7 +1005,7 @@ export default function AttendanceView({ onOpenLeaveModal }) {
                 type="button"
                 onClick={handleSubmitAttendance}
                 disabled={savingAttendance || rosterLoading || roster.length === 0}
-                className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-md shadow-brand-500/20 transition flex items-center gap-2 disabled:opacity-50"
+                className="w-full sm:w-auto min-h-[36px] px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-md shadow-brand-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {savingAttendance ? (
                   <>

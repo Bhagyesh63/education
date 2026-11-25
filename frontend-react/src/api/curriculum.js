@@ -1,5 +1,22 @@
 import { frappeCall } from './client';
 
+const isArgsObject = (args) => args.length === 1 && args[0] && typeof args[0] === 'object';
+
+function materialArgs(args) {
+  const [topic_name, content_type, title, details, course_name] = isArgsObject(args)
+    ? [args[0].topic_name, args[0].content_type, args[0].title, args[0].details, args[0].course_name]
+    : args;
+  return { topic_name, content_type, title, details, course_name };
+}
+
+function topicArgs(args) {
+  const [course_name, topic_title, description] = isArgsObject(args)
+    ? [args[0].course_name, args[0].topic_title, args[0].description]
+    : args;
+  return { course_name, topic_title, description };
+}
+
+
 export const curriculumApi = {
   getAllPrograms: () => 
     frappeCall('education.education.api.get_all_programs'),
@@ -28,17 +45,19 @@ export const curriculumApi = {
   getLearningContent: (content_type, content_name) => 
     frappeCall('education.education.api.get_learning_content_details', { content_type, content_name }),
 
-  createTopicLearningMaterial: ({ topic_name, content_type, title, details, course_name }) => 
-    frappeCall('education.education.api.create_topic_learning_material', { topic_name, content_type, title, details, course_name }),
+  // Accept an object or positional args (topic_name, content_type, title, details, course_name)
+  createTopicLearningMaterial: (...args) =>
+    frappeCall('education.education.api.create_topic_learning_material', materialArgs(args)),
 
-  createLearningMaterial: ({ topic_name, content_type, title, details, course_name }) => 
-    frappeCall('education.education.api.create_topic_learning_material', { topic_name, content_type, title, details, course_name }),
+  createLearningMaterial: (...args) =>
+    frappeCall('education.education.api.create_topic_learning_material', materialArgs(args)),
 
-  createCourseTopic: ({ course_name, topic_title, description }) => 
-    frappeCall('education.education.api.create_course_topic', { course_name, topic_title, description }),
+  // Accept an object or positional args (course_name, topic_title, description)
+  createCourseTopic: (...args) =>
+    frappeCall('education.education.api.create_course_topic', topicArgs(args)),
 
-  createTopic: ({ course_name, topic_title, description }) => 
-    frappeCall('education.education.api.create_course_topic', { course_name, topic_title, description }),
+  createTopic: (...args) =>
+    frappeCall('education.education.api.create_course_topic', topicArgs(args)),
 
   createProgram: ({ program_name, program_abbreviation, department, courses, create_default_section }) =>
     frappeCall('education.education.api.create_program', {

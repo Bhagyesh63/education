@@ -6,64 +6,70 @@ import { api } from '../api/frappeClient';
 
 export default function TodayScheduleWidget() {
   const navigate = useNavigate();
-  const { activeProgram, studentGroups, isStaff } = useAuth();
+  const { activeStudentId, studentProfile, isStaff } = useAuth();
+  const studentId = isStaff ? null : (activeStudentId || studentProfile?.name || null);
   const [sessions, setSessions] = useState([]);
+  const [isToday, setIsToday] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
+    let isMounted = true;
     setLoading(true);
-    api.getCourseSchedule(null, null)
+    setError('');
+    // Role-scoped: student/guardian -> the student's groups, instructor -> own sessions
+    api.getDashboardSchedule(studentId, 3)
       .then((data) => {
-        // Find today or next upcoming sessions
-        const todayStr = new Date().toISOString().split('T')[0];
-        let todayClasses = (data || []).filter(item => item.schedule_date === todayStr);
-
-        // If no classes strictly today, show next available scheduled sessions as preview
-        if (todayClasses.length === 0 && data && data.length > 0) {
-          const sorted = [...data].sort((a, b) => new Date(a.schedule_date) - new Date(b.schedule_date));
-          todayClasses = sorted.slice(0, 3);
-        }
-
-        const mapped = todayClasses.map(item => ({
+        if (!isMounted) return;
+        setIsToday(data?.is_today !== false);
+        setSessions((data?.sessions || []).map(item => ({
           id: item.name,
-          title: item.title || item.course || 'Lecture',
+          title: item.title || item.course,
           course: item.course,
           program: item.program,
           student_group: item.student_group,
-          instructor: item.instructor,
-          room: item.room,
+          instructor: item.instructor_name || item.instructor,
+          room: item.room_name || item.room,
           date: item.schedule_date,
-          from_time: item.from_time ? item.from_time.split('.')[0] : '',
-          to_time: item.to_time ? item.to_time.split('.')[0] : '',
-          color: item.class_schedule_color || '#4f46e5',
-        }));
-
-        setSessions(mapped);
+          from_time: item.from_time || '',
+          to_time: item.to_time || '',
+          color: item.color || '#4f46e5',
+        })));
       })
       .catch((err) => {
         console.error('Error fetching today schedule:', err);
-        setSessions([]);
+        if (isMounted) {
+          setSessions([]);
+          setError(err.message || 'Unable to load the timetable');
+        }
       })
-      .finally(() => setLoading(false));
-  }, [activeProgram, studentGroups, isStaff]);
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [studentId, isStaff]);
 
   return (
-    <div className="glass-panel p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+    <div className="glass-panel p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between min-w-0">
       <div>
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pb-4 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 shrink-0 rounded-xl bg-brand-50 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 flex items-center justify-center">
               <Calendar className="w-4 h-4" />
             </div>
-            <div>
-              <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Today's Class Schedule</h3>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">Scheduled classroom lectures</p>
+            <div className="min-w-0">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100 truncate">Today's Class Schedule</h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                {!loading && !isToday && sessions.length > 0 ? 'Nothing today · next upcoming lectures' : 'Scheduled classroom lectures'}
+              </p>
             </div>
           </div>
 
           <button
             onClick={() => navigate('/schedule')}
-            className="text-xs font-bold text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300 flex items-center gap-1 transition"
+            className="shrink-0 min-h-[36px] sm:min-h-0 text-xs font-bold text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300 flex items-center gap-1 transition"
           >
             <span>Full Timetable</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -74,6 +80,11 @@ export default function TodayScheduleWidget() {
           <div className="py-10 text-center text-slate-400 text-xs">
             <div className="w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
             Loading classes...
+          </div>
+        ) : error ? (
+          <div className="py-10 text-center text-rose-500 dark:text-rose-400 text-xs break-words">
+            <Calendar className="w-8 h-8 text-slate-300 dark:text-slate-700 mx-auto mb-2" />
+            {error}
           </div>
         ) : sessions.length === 0 ? (
           <div className="py-10 text-center text-slate-400 text-xs">
@@ -92,14 +103,14 @@ export default function TodayScheduleWidget() {
                   style={{ backgroundColor: item.color }} 
                 />
                 
-                <div className="flex items-start justify-between gap-2 pl-1.5">
-                  <div className="min-w-0">
+                <div className="flex flex-wrap items-start justify-between gap-2 pl-1.5">
+                  <div className="min-w-0 flex-1">
                     <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
                       {item.title}
                     </h4>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
-                      <User className="w-3 h-3" />
-                      <span>{item.instructor || 'Faculty Member'}</span>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5 min-w-0">
+                      <User className="w-3 h-3 shrink-0" />
+                      <span className="truncate">{item.instructor || 'Instructor not assigned'}</span>
                     </p>
                   </div>
 
@@ -109,12 +120,12 @@ export default function TodayScheduleWidget() {
                   </span>
                 </div>
 
-                <div className="mt-2.5 pt-2 pl-1.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                  <span className="flex items-center gap-1 font-medium text-slate-700 dark:text-slate-300">
-                    <MapPin className="w-3 h-3 text-brand-500" />
-                    {item.room || 'Classroom HTL-1'}
+                <div className="mt-2.5 pt-2 pl-1.5 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+                  <span className="flex items-center gap-1 font-medium text-slate-700 dark:text-slate-300 min-w-0 break-words">
+                    <MapPin className="w-3 h-3 shrink-0 text-brand-500" />
+                    {item.room || 'Room not assigned'}
                   </span>
-                  <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
+                  <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">
                     {item.date}
                   </span>
                 </div>

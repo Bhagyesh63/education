@@ -18,7 +18,7 @@ add_to_apps_screen = [
         "name": "education",
         "logo": "/assets/education/edu-logo.svg",
         "title": "Education",
-        "route": "/app/education",
+        "route": "/desk/education",
         "has_permission": "education.api.permissions.has_app_permission",
     }
 ]
@@ -172,12 +172,31 @@ after_install = "education.install.after_install"
 # -----------
 # Permissions evaluated in scripted ways
 
+_student_linked = (
+    "Program Enrollment",
+    "Course Enrollment",
+    "Student Attendance",
+    "Assessment Result",
+    "Student Leave Application",
+    "Sales Invoice",
+)
+
 permission_query_conditions = {
     "Student": "education.education.doctype.student.student.get_permission_query_conditions",
+    "Guardian": "education.education.doctype.student.student.guardian_query_conditions",
+    **{
+        dt: "education.education.doctype.student.student.student_linked_query_conditions"
+        for dt in _student_linked
+    },
 }
 
 has_permission = {
     "Student": "education.education.doctype.student.student.has_permission",
+    "Guardian": "education.education.doctype.student.student.guardian_has_permission",
+    **{
+        dt: "education.education.doctype.student.student.student_linked_has_permission"
+        for dt in _student_linked
+    },
 }
 
 # DocType Class

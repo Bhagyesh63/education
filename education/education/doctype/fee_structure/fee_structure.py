@@ -167,7 +167,7 @@ def get_future_dates(fee_plan, start_date=None):
     return months
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def make_fee_schedule(
     source_name: str,
     dialog_values: str,

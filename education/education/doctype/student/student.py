@@ -336,3 +336,88 @@ def get_permission_query_conditions(user=None, doctype=None):
 			and sg.guardian in ({guardian_list}))""")
 
     return "({})".format(" or ".join(conditions))
+
+
+# ------------------------------------------------------------------------------
+# Row-level scoping of student-linked records for portal (Student / Guardian) users.
+# Without this, the Student/Guardian read permission on these doctypes exposes every
+# student's records through the generic REST API (/api/resource, frappe.client.*).
+# ------------------------------------------------------------------------------
+
+STUDENT_LINKED_DOCTYPES = (
+    "Program Enrollment",
+    "Course Enrollment",
+    "Student Attendance",
+    "Assessment Result",
+    "Student Leave Application",
+    "Sales Invoice",
+)
+
+
+def _is_portal_only_user_for(doctype, user):
+    if user == "Administrator":
+        return False
+    return not any(
+        perm.read and perm.role not in PORTAL_ROLES
+        for perm in get_valid_perms(doctype, user)
+    )
+
+
+def _portal_student_ids(user):
+    from education.education.api import get_guardians_for_user
+
+    ids = frappe.get_all("Student", filters={"user": user}, pluck="name")
+    guardians = get_guardians_for_user(user)
+    if guardians:
+        ids += frappe.get_all(
+            "Student Guardian",
+            filters={"guardian": ["in", guardians], "parenttype": "Student"},
+            pluck="parent",
+        )
+    return list(dict.fromkeys(ids))
+
+
+def student_linked_query_conditions(user=None, doctype=None):
+    user = user or frappe.session.user
+    if not doctype or not _is_portal_only_user_for(doctype, user):
+        return ""
+    ids = _portal_student_ids(user)
+    if not ids:
+        return "1=0"
+    return "`tab{0}`.`student` in ({1})".format(
+        doctype, ", ".join(frappe.db.escape(i) for i in ids)
+    )
+
+
+def student_linked_has_permission(doc, ptype=None, user=None, debug=False):
+    user = user or frappe.session.user
+    if not _is_portal_only_user_for(doc.doctype, user):
+        return True
+    student = doc.get("student")
+    if not student:
+        # new / unlinked documents: defer to role permissions
+        return True if ptype == "create" else False
+    return student in _portal_student_ids(user)
+
+
+def guardian_query_conditions(user=None, doctype=None):
+    from education.education.api import get_guardians_for_user
+
+    user = user or frappe.session.user
+    if not _is_portal_only_user_for("Guardian", user):
+        return ""
+    guardians = get_guardians_for_user(user)
+    if not guardians:
+        return "1=0"
+    return "`tabGuardian`.`name` in ({0})".format(
+        ", ".join(frappe.db.escape(g) for g in guardians)
+    )
+
+
+def guardian_has_permission(doc, ptype=None, user=None, debug=False):
+    from education.education.api import get_guardians_for_user
+
+    user = user or frappe.session.user
+    if not _is_portal_only_user_for("Guardian", user):
+        return True
+    return doc.name in get_guardians_for_user(user)

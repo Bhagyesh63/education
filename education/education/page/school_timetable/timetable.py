@@ -192,7 +192,7 @@ def get_courses():
     return [{"value": c.name, "label": c.course_name or c.name} for c in courses]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_course_schedule(
     course: str | None,
     instructor: str | None,
@@ -233,7 +233,7 @@ def create_course_schedule(
     return doc.name
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_course_schedule(
     schedule_name: str | None,
     schedule_date: str | None = None,
@@ -255,7 +255,7 @@ def update_course_schedule(
     return doc.name
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_course_schedule_details(
     schedule_name: str | None,
     course: str | None = None,

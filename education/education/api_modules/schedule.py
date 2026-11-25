@@ -4,11 +4,126 @@
 import json
 import frappe
 from frappe import _
-from education.education.api_modules.common import _resolve_portal_student
-from education.education.api_modules.students import get_student_groups
+from education.education.api_modules.curriculum import (
+    _get_user_instructors,
+    _get_viewable_students,
+    _has_any_role,
+    _is_staff,
+    _require_login,
+    _require_staff,
+    MANAGER_ROLES,
+)
+
+SCHEDULE_FIELDS = [
+    "name",
+    "schedule_date",
+    "room",
+    "class_schedule_color",
+    "course",
+    "from_time",
+    "to_time",
+    "instructor",
+    "instructor_name",
+    "title",
+    "program",
+    "student_group",
+]
 
 
-@frappe.whitelist(allow_guest=True)
+def _parse_list(value):
+    if not value:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            value = [v.strip() for v in value.split(",") if v.strip()]
+    if not isinstance(value, (list, tuple)):
+        value = [value]
+    out = []
+    for v in value:
+        if isinstance(v, dict):
+            v = v.get("label") or v.get("name") or v.get("student_group")
+        if v:
+            out.append(str(v))
+    return out
+
+
+def _student_group_ids(students):
+    """Active, enabled student groups the given students belong to."""
+    if not students:
+        return []
+    sg = frappe.qb.DocType("Student Group")
+    sgs = frappe.qb.DocType("Student Group Student")
+    rows = (
+        frappe.qb.from_(sg)
+        .inner_join(sgs)
+        .on(sg.name == sgs.parent)
+        .select(sg.name)
+        .where(sgs.student.isin(students))
+        .where(sgs.active == 1)
+        .where(sg.disabled == 0)
+        .distinct()
+        .run(pluck=True)
+    )
+    return list(rows)
+
+
+def _instructor_group_ids(instructors):
+    if not instructors:
+        return []
+    return list(
+        set(
+            frappe.get_all(
+                "Student Group Instructor",
+                filters={"parenttype": "Student Group", "instructor": ["in", instructors]},
+                pluck="parent",
+            )
+        )
+    )
+
+
+def _resolve_instructor_ids(value):
+    """Accepts an Instructor ID or an instructor display name; returns matching Instructor IDs."""
+    if not value or value == "all":
+        return []
+    if frappe.db.exists("Instructor", value):
+        return [value]
+    return frappe.get_all("Instructor", filters={"instructor_name": value}, pluck="name")
+
+
+def _get_schedule_scope(student=None):
+    """Determines which Course Schedules the current user may read.
+
+    Returns a dict:
+      {"all": True}                                    -> managers / academics users
+      {"groups": [...], "instructors": [...]}          -> instructors (own groups OR own lectures)
+      {"groups": [...], "students": [...]}             -> students / guardians (enrolled groups only)
+    """
+    _require_login()
+    is_manager = _has_any_role(MANAGER_ROLES)
+    instructors = [] if is_manager else _get_user_instructors()
+    # Academics Users without a linked Instructor record act as academic administrators;
+    # anyone linked to an Instructor record (and not a manager) is scoped to own groups.
+    is_full = is_manager or (_has_any_role({"Academics User"}) and not instructors)
+
+    if student and (is_full or _is_staff()):
+        # Staff looking at a particular student's timetable
+        if not frappe.db.exists("Student", student):
+            return {"groups": [], "students": []}
+        return {"groups": _student_group_ids([student]), "students": [student]}
+
+    if is_full:
+        return {"all": True}
+
+    if instructors or _has_any_role({"Instructor"}):
+        return {"groups": _instructor_group_ids(instructors), "instructors": instructors}
+
+    students = _get_viewable_students(student)
+    return {"groups": _student_group_ids(students), "students": students}
+
+
+@frappe.whitelist()
 def get_course_schedule_events(
     start: str, end: str, filters: str | dict | list | None = None
 ):
@@ -49,101 +164,114 @@ def get_course_schedule_events(
     return data
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_course_schedule_for_student(
-    program_name: str = None, 
-    student_groups: list = None, 
+    program_name: str = None,
+    student_groups: list | str = None,
     student: str = None,
     instructor: str = None,
+    from_date: str = None,
+    to_date: str = None,
 ):
-    """Returns course schedules for both faculty, students, and guardians."""
-    if isinstance(student_groups, str):
-        try:
-            student_groups = json.loads(student_groups)
-        except Exception:
-            student_groups = []
+    """Returns course schedules visible to the current user.
 
-    fields = [
-        "name",
-        "schedule_date",
-        "room",
-        "class_schedule_color",
-        "course",
-        "from_time",
-        "to_time",
-        "instructor",
-        "instructor_name",
-        "title",
-        "program",
-        "student_group",
-    ]
+    - Managers / Academics Users: all schedules (optionally filtered).
+    - Instructors: lectures of their student groups or lectures they teach.
+    - Students: lectures of the student groups they are enrolled in.
+    - Guardians: lectures of their wards' groups (``student`` must be a ward).
+    """
+    scope = _get_schedule_scope(student)
+    requested_groups = _parse_list(student_groups)
 
     filters = {}
+    or_filters = None
 
     if program_name and program_name != "all":
         filters["program"] = program_name
 
+    if from_date and to_date:
+        filters["schedule_date"] = ["between", [from_date, to_date]]
+    elif from_date:
+        filters["schedule_date"] = [">=", from_date]
+    elif to_date:
+        filters["schedule_date"] = ["<=", to_date]
+
     if instructor and instructor != "all":
-        filters["instructor"] = instructor
+        ids = _resolve_instructor_ids(instructor)
+        if not ids:
+            return []
+        filters["instructor"] = ["in", ids]
 
-    target_student = _resolve_portal_student(student) or student
+    if not scope.get("all"):
+        allowed = scope.get("groups") or []
+        if "instructors" in scope:
+            # Visible: lectures of own student groups OR lectures they teach.
+            mine = scope.get("instructors") or []
+            visibility = []
+            if allowed:
+                visibility.append(["Course Schedule", "student_group", "in", allowed])
+            if mine:
+                visibility.append(["Course Schedule", "instructor", "in", mine])
+            if not visibility:
+                return []
+            # or_filters are AND-ed with filters, so requested groups / instructor narrow further
+            or_filters = visibility
+            if requested_groups:
+                filters["student_group"] = ["in", requested_groups]
+        else:
+            if not allowed:
+                return []
+            groups = [g for g in requested_groups if g in allowed]
+            filters["student_group"] = ["in", groups or allowed]
+    elif requested_groups:
+        filters["student_group"] = ["in", requested_groups]
 
-    if student_groups and isinstance(student_groups, list) and len(student_groups) > 0:
-        extracted_groups = [sg.get("label") if isinstance(sg, dict) else str(sg) for sg in student_groups if sg]
-        if program_name and program_name != "all":
-            valid_for_prog = frappe.get_all(
-                "Student Group",
-                filters={"name": ["in", extracted_groups], "program": program_name},
-                pluck="name",
-            )
-            if valid_for_prog:
-                filters["student_group"] = ["in", valid_for_prog]
-            elif target_student:
-                stu_groups = get_student_groups(target_student, program_name)
-                ext = [g.get("label") for g in stu_groups if g.get("label")]
-                if ext:
-                    filters["student_group"] = ["in", ext]
-        elif extracted_groups:
-            filters["student_group"] = ["in", extracted_groups]
-    elif not student_groups and (not program_name or program_name == "all"):
-        if target_student:
-            student_group = frappe.qb.DocType("Student Group")
-            student_group_students = frappe.qb.DocType("Student Group Student")
-            stu_groups = (
-                frappe.qb.from_(student_group)
-                .inner_join(student_group_students)
-                .on(student_group.name == student_group_students.parent)
-                .select(student_group_students.parent.as_("label"))
-                .where(student_group_students.student == target_student)
-                .run(as_dict=1)
-            )
-            extracted = [g.get("label") for g in stu_groups if g.get("label")]
-            if extracted:
-                filters["student_group"] = ["in", extracted]
-    elif not student_groups and target_student and program_name and program_name != "all":
-        stu_groups = get_student_groups(target_student, program_name)
-        ext = [g.get("label") for g in stu_groups if g.get("label")]
-        if ext:
-            filters["student_group"] = ["in", ext]
-
-    schedule = frappe.get_all(
+    return frappe.get_all(
         "Course Schedule",
-        fields=fields,
+        fields=SCHEDULE_FIELDS,
         filters=filters,
+        or_filters=or_filters,
         order_by="schedule_date asc, from_time asc",
-        limit_page_length=300,
+        limit_page_length=500 if (from_date or to_date) else 300,
     )
-    return schedule
 
 
 get_course_schedule = get_course_schedule_for_student
 
 
+def _course_instructor_map(courses=None):
+    """{course: [instructor IDs]} from Instructor Log rows and course-based Student Group instructors."""
+    mapping = {}
+    log_filters = {"parenttype": "Instructor", "course": ["is", "set"]}
+    if courses:
+        log_filters["course"] = ["in", courses]
+    for row in frappe.get_all("Instructor Log", filters=log_filters, fields=["parent", "course"]):
+        mapping.setdefault(row.course, set()).add(row.parent)
+
+    sg = frappe.qb.DocType("Student Group")
+    sgi = frappe.qb.DocType("Student Group Instructor")
+    q = (
+        frappe.qb.from_(sg)
+        .inner_join(sgi)
+        .on(sg.name == sgi.parent)
+        .select(sg.course, sgi.instructor)
+        .where(sg.group_based_on == "Course")
+        .where(sg.course.isnotnull())
+    )
+    if courses:
+        q = q.where(sg.course.isin(courses))
+    for row in q.run(as_dict=True):
+        if row.course and row.instructor:
+            mapping.setdefault(row.course, set()).add(row.instructor)
+    return {k: sorted(v) for k, v in mapping.items()}
+
+
 def get_eligible_instructors(course: str = None, student_group: str = None):
-    """Returns list of instructor names/IDs eligible to teach the given course/subject and student group."""
+    """Instructor IDs eligible to teach the given course / student group, based purely on
+    Student Group Instructor and Instructor Log records. Falls back to all instructors
+    when no assignment data exists."""
     eligible = []
 
-    # 1. Check Student Group Instructor table
     if student_group:
         assigned = frappe.get_all(
             "Student Group Instructor", {"parent": student_group}, pluck="instructor"
@@ -151,82 +279,66 @@ def get_eligible_instructors(course: str = None, student_group: str = None):
         group_based_on = frappe.db.get_value("Student Group", student_group, "group_based_on")
         if group_based_on == "Course" and assigned:
             return assigned
-        if assigned:
-            eligible.extend(assigned)
+        eligible.extend(assigned)
 
-    # 2. Check Instructor Log table for this course
     if course:
-        log_instructors = frappe.get_all(
-            "Instructor Log", {"course": course}, pluck="parent"
-        )
-        if log_instructors:
-            return list(set(log_instructors))
-
-    # 3. Explicit canonical mapping
-    if course:
-        c_lower = course.lower()
-        if "math" in c_lower:
-            if "7" in c_lower or "std:7" in c_lower:
-                return ["Kavita Rao"]
-            return ["Amit Verma"]
-        elif "english" in c_lower:
-            if "7" in c_lower or "std : 7" in c_lower:
-                return ["Pooja Mehta"]
-            return ["Neha Shah"]
-        elif "science" in c_lower:
-            return ["Rajesh Patel"]
-        elif "social" in c_lower:
-            return ["Vikram Malhotra"]
+        from_course = _course_instructor_map([course]).get(course)
+        if from_course:
+            return from_course
 
     return eligible or frappe.get_all("Instructor", pluck="name")
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_schedule_metadata():
-    """Returns lists of Courses, Instructors, Student Groups, and Rooms with faculty mappings for schedule planning."""
-    courses = frappe.get_all("Course", fields=["name", "course_name"], limit_page_length=100)
-    instructors = frappe.get_all("Instructor", fields=["name", "instructor_name"], filters={"status": "Active"}, limit_page_length=100)
-    if not instructors:
-        instructors = frappe.get_all("Instructor", fields=["name", "instructor_name"], limit_page_length=100)
-    student_groups = frappe.get_all("Student Group", fields=["name", "student_group_name", "program", "course", "group_based_on"], limit_page_length=100)
-    rooms = frappe.get_all("Room", fields=["name", "room_name"], limit_page_length=100) if frappe.db.exists("DocType", "Room") else []
+    """Courses, Instructors, Student Groups and Rooms (with faculty mappings) for schedule planning.
+    Staff only."""
+    _require_staff(_("plan course schedules"))
 
-    # Map Student Groups to assigned Instructors
+    courses = frappe.get_all("Course", fields=["name", "course_name"], order_by="course_name asc", limit_page_length=0)
+    instructors = frappe.get_all(
+        "Instructor",
+        fields=["name", "instructor_name", "department"],
+        filters={"status": ["!=", "Left"]},
+        order_by="instructor_name asc",
+        limit_page_length=0,
+    )
+    student_groups = frappe.get_all(
+        "Student Group",
+        fields=["name", "student_group_name", "program", "course", "group_based_on", "academic_year", "default_room"],
+        filters={"disabled": 0},
+        order_by="student_group_name asc",
+        limit_page_length=0,
+    )
+    rooms = frappe.get_all(
+        "Room",
+        fields=["name", "room_name", "room_number", "seating_capacity"],
+        order_by="room_name asc",
+        limit_page_length=0,
+    )
+
+    instructor_lookup = {i.name: i for i in instructors}
+
     group_instructors = {}
-    sgi = frappe.get_all("Student Group Instructor", fields=["parent", "instructor", "instructor_name"])
-    for row in sgi:
+    for row in frappe.get_all(
+        "Student Group Instructor",
+        filters={"parenttype": "Student Group"},
+        fields=["parent", "instructor", "instructor_name"],
+        limit_page_length=0,
+    ):
         group_instructors.setdefault(row.parent, []).append({
             "name": row.instructor,
-            "instructor_name": row.instructor_name or row.instructor
+            "instructor_name": row.instructor_name or row.instructor,
         })
 
-    # Map Courses to qualified/assigned Instructors directly from Instructor Log & Student Group Instructor
     course_instructors = {}
-    for c in courses:
-        c_name = c.name
-        # Check Instructor Log
-        logs = frappe.get_all("Instructor Log", {"course": c_name}, pluck="parent")
-        # Check course-based student groups
-        sgs = [sg["name"] for sg in student_groups if sg.get("course") == c_name]
-        sg_ins = frappe.get_all("Student Group Instructor", {"parent": ["in", sgs]}, pluck="instructor") if sgs else []
-
-        combined = list(set(logs + sg_ins))
-
-        if not combined:
-            c_lower = c_name.lower()
-            if "math" in c_lower:
-                combined = ["Kavita Rao"] if ("7" in c_lower or "std:7" in c_lower) else ["Amit Verma"]
-            elif "english" in c_lower:
-                combined = ["Pooja Mehta"] if ("7" in c_lower or "std : 7" in c_lower) else ["Neha Shah"]
-            elif "science" in c_lower:
-                combined = ["Rajesh Patel"]
-            elif "social" in c_lower:
-                combined = ["Vikram Malhotra"]
-
-        course_instructors[c_name] = [
-            next((i for i in instructors if i["name"] == ins), {"name": ins, "instructor_name": ins})
-            for ins in combined
+    for course, ins_ids in _course_instructor_map().items():
+        course_instructors[course] = [
+            {"name": i, "instructor_name": (instructor_lookup.get(i) or {}).get("instructor_name") or i}
+            for i in ins_ids
         ]
+
+    my_instructors = _get_user_instructors()
 
     return {
         "courses": courses,
@@ -235,11 +347,18 @@ def get_schedule_metadata():
         "rooms": rooms,
         "group_instructors": group_instructors,
         "course_instructors": course_instructors,
+        "current_instructor": my_instructors[0] if my_instructors else None,
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_course_schedule(course, student_group, instructor, schedule_date, from_time, to_time, room=None):
+    _require_staff(_("schedule lectures"))
+    if not frappe.db.exists("Instructor", instructor):
+        ids = _resolve_instructor_ids(instructor)
+        if not ids:
+            frappe.throw(_("Instructor {0} not found.").format(instructor))
+        instructor = ids[0]
     doc = frappe.new_doc("Course Schedule")
     doc.course = course
     doc.student_group = student_group
@@ -257,8 +376,9 @@ def create_course_schedule(course, student_group, instructor, schedule_date, fro
     return doc.as_dict()
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_course_schedule(course_schedule: str):
+    _require_staff(_("cancel lectures"))
     if not course_schedule:
         frappe.throw(_("Course Schedule ID is required"))
     if frappe.db.exists("Course Schedule", course_schedule):
@@ -273,14 +393,15 @@ def delete_course_schedule(course_schedule: str):
     return {"status": "not_found", "message": _("Schedule record not found.")}
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def get_instructors(student_group: str):
+    _require_login()
     return frappe.get_all(
         "Student Group Instructor", {"parent": student_group}, pluck="instructor"
     )
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist(methods=["POST"])
 def bulk_schedule_course(
     student_group: str,
     course: str,
@@ -295,8 +416,8 @@ def bulk_schedule_course(
     class_schedule_color: str = "blue",
 ):
     import calendar
-    from frappe.utils import add_days, getdate
-    from education.education.utils import OverlapError
+    from frappe.utils import add_days, get_time, getdate
+    _require_staff(_("schedule lectures"))
 
     if isinstance(days, str):
         try:
@@ -307,8 +428,31 @@ def bulk_schedule_course(
     if not days:
         frappe.throw(_("Please select at least one day to schedule the course."))
 
+    for value, label in (
+        (student_group, _("Student Group")),
+        (course, _("Course")),
+        (instructor, _("Instructor")),
+        (room, _("Room")),
+        (from_time, _("From Time")),
+        (to_time, _("To Time")),
+        (course_start_date, _("Course Start Date")),
+        (course_end_date, _("Course End Date")),
+    ):
+        if not value:
+            frappe.throw(_("{0} is mandatory").format(label))
+
     if getdate(course_start_date) > getdate(course_end_date):
         frappe.throw(_("Course Start Date cannot be greater than Course End Date."))
+
+    if get_time(from_time) >= get_time(to_time):
+        frappe.throw(_("To Time must be later than From Time."))
+
+    # Same as the desk tool: a course-based group always schedules its own course
+    group_based_on, group_course = frappe.db.get_value(
+        "Student Group", student_group, ["group_based_on", "course"]
+    ) or (None, None)
+    if group_based_on == "Course" and group_course:
+        course = group_course
 
     # Validate faculty subject qualification
     eligible = get_eligible_instructors(course=course, student_group=student_group)
@@ -330,37 +474,39 @@ def bulk_schedule_course(
     curr_date = getdate(course_start_date)
     end_date = getdate(course_end_date)
 
+    # Reschedule (same as the desk Course Scheduling Tool): remove this student group's
+    # schedules of this course within the date range on the selected weekdays, then recreate.
+    # Lectures of other groups / courses are never touched; lectures that already have
+    # attendance are kept and reported.
+    if frappe.utils.cint(reschedule):
+        for old in frappe.get_all(
+            "Course Schedule",
+            filters={
+                "student_group": student_group,
+                "course": course,
+                "schedule_date": ["between", [course_start_date, course_end_date]],
+            },
+            fields=["name", "schedule_date", "room"],
+        ):
+            if calendar.day_name[getdate(old.schedule_date).weekday()] not in days:
+                continue
+            att_count = frappe.db.count(
+                "Student Attendance", {"course_schedule": old.name, "docstatus": ("!=", 2)}
+            )
+            if att_count:
+                reschedule_errors.append(
+                    _("{0} ({1}) kept: {2} attendance records exist").format(
+                        old.name, old.schedule_date, att_count
+                    )
+                )
+                continue
+            frappe.delete_doc("Course Schedule", old.name, ignore_permissions=True)
+            rescheduled.append(old.name)
+
     while curr_date <= end_date:
         day_name = calendar.day_name[curr_date.weekday()]
         if day_name in days:
             date_str = str(curr_date)
-
-            # When Reschedule is enabled: clear conflicting un-attended slots in the same Room, Student Group, or for the Instructor
-            if reschedule:
-                conflicts = frappe.db.sql("""
-                    select name, course, student_group, room, instructor
-                    from `tabCourse Schedule`
-                    where schedule_date = %s
-                      and from_time < %s
-                      and to_time > %s
-                      and (
-                          room = %s
-                          or student_group = %s
-                          or instructor = %s
-                      )
-                      and docstatus != 2
-                """, (date_str, to_time, from_time, room, student_group, instructor), as_dict=True)
-
-                for conf in conflicts:
-                    att_count = frappe.db.count("Student Attendance", {"course_schedule": conf.name, "docstatus": ("!=", 2)})
-                    if att_count == 0:
-                        frappe.delete_doc("Course Schedule", conf.name, ignore_permissions=True)
-                        if conf.name not in rescheduled:
-                            rescheduled.append(conf.name)
-                    else:
-                        reschedule_errors.append(
-                            f"{conf.name} ({conf.course} in {conf.room} has {att_count} submitted attendance records)"
-                        )
 
             existing = frappe.db.exists(
                 "Course Schedule",
@@ -398,11 +544,15 @@ def bulk_schedule_course(
                         "from_time": from_time,
                         "to_time": to_time,
                     })
-                except Exception as ex:
+                except frappe.ValidationError as ex:
+                    # e.g. OverlapError (instructor / room / group already booked) or a date
+                    # outside the academic term: skip this date and report it (like the desk).
+                    if frappe.local.message_log:
+                        frappe.local.message_log.pop()
                     errors.append({
                         "date": date_str,
                         "day": day_name,
-                        "error": str(ex),
+                        "error": frappe.utils.strip_html(str(ex)),
                     })
         curr_date = add_days(curr_date, 1)
 
@@ -421,7 +571,7 @@ def bulk_schedule_course(
             "message": errors[0].get("error", _("Failed to create course schedules.")),
         }
 
-    resched_note = _(" ({0} conflicting slots replaced)").format(len(rescheduled)) if rescheduled else ""
+    resched_note = _(" ({0} existing slots replaced)").format(len(rescheduled)) if rescheduled else ""
     return {
         "status": "success",
         "created_count": len(created),

@@ -33,6 +33,9 @@ export const feesApi = {
 
   submitSalesInvoice: (sales_invoice) => 
     frappeCall('education.education.api.submit_sales_invoice', { sales_invoice }),
+
+  getPaymentModes: () =>
+    frappeCall('education.education.api.get_payment_modes'),
 };
 
 export default feesApi;

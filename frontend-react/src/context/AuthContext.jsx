@@ -80,18 +80,28 @@ export function AuthProvider({ children }) {
         const wards = portal.students || [];
         setStudents(wards);
 
-        // Determine active student
-        let chosenId = portal.active_student_id || activeStudentId;
+        // Determine active student: keep a previously chosen ward if it belongs to this guardian
         const wardIds = wards.map(w => w.student);
+        const savedId = localStorage.getItem('edu_active_student_id');
+        let chosenId = (savedId && wardIds.includes(savedId)) ? savedId : (portal.active_student_id || null);
         if (!chosenId || !wardIds.includes(chosenId)) {
           chosenId = wardIds.length ? wardIds[0] : null;
         }
         setActiveStudentId(chosenId);
         if (chosenId) {
           localStorage.setItem('edu_active_student_id', chosenId);
+        } else {
+          localStorage.removeItem('edu_active_student_id');
+          setStudentProfile(null);
+          setPrograms([]);
+          setActiveProgram(null);
+          setActiveAcademicYear(null);
+          setActiveEnrollmentId(null);
+          setCurrentEnrollment(null);
+          setStudentGroups([]);
         }
 
-        if (portal.student_info) {
+        if (chosenId && portal.student_info && chosenId === portal.active_student_id) {
           setStudentProfile(portal.student_info);
           setPrograms(portal.programs || []);
           setActiveProgram(portal.active_program || portal.suggested_program || null);
@@ -107,9 +117,11 @@ export function AuthProvider({ children }) {
         setGuardianInfo(null);
         setInstructorInfo(null);
         setAdminInfo(null);
+        setActiveStudentId(portal.student || null);
         if (portal.student) {
-          setActiveStudentId(portal.student);
           localStorage.setItem('edu_active_student_id', portal.student);
+        } else {
+          localStorage.removeItem('edu_active_student_id');
         }
 
         // Fast path: if context already carries profile & program details, hydrate synchronously
@@ -117,7 +129,7 @@ export function AuthProvider({ children }) {
           setStudentProfile(portal.student_info);
           const studentPrograms = portal.programs || [];
           setPrograms(studentPrograms);
-          const activeProg = portal.active_program || portal.suggested_program || (studentPrograms[0]?.program) || 'Standard 5';
+          const activeProg = portal.active_program || portal.suggested_program || (studentPrograms[0]?.program) || null;
           const activeYear = portal.active_academic_year || portal.suggested_academic_year || (studentPrograms[0]?.academic_year) || null;
           const activeEnr = portal.active_enrollment_id || portal.suggested_enrollment || (studentPrograms[0]?.program_enrollment) || null;
           setActiveProgram(activeProg);
@@ -125,14 +137,26 @@ export function AuthProvider({ children }) {
           setActiveEnrollmentId(activeEnr);
           setCurrentEnrollment(portal.enrollment || null);
           setStudentGroups(portal.student_groups || []);
+        } else if (portal.student) {
+          await loadStudentDetails(portal.student);
         } else {
-          await loadStudentDetails(portal.student || null);
+          // Student role without a linked Student record: show empty states, never placeholder data
+          setStudentProfile(null);
+          setPrograms([]);
+          setActiveProgram(null);
+          setActiveAcademicYear(null);
+          setActiveEnrollmentId(null);
+          setCurrentEnrollment(null);
+          setStudentGroups([]);
         }
       } else if (portal.role === 'Instructor') {
         setStudents([]);
         setGuardianInfo(null);
         setAdminInfo(null);
-        setInstructorInfo(portal.instructor || { instructor_name: portal.full_name || 'Faculty Member' });
+        setStudentProfile(null);
+        setActiveStudentId(null);
+        // Instructor record may be unlinked; fall back to the real user's name, with no record id
+        setInstructorInfo(portal.instructor || { name: null, instructor_name: portal.full_name || portal.user || null });
         setActiveProgram(portal.active_program || portal.programs?.[0]?.program || null);
         setActiveAcademicYear(null);
         setActiveEnrollmentId(null);
@@ -142,7 +166,9 @@ export function AuthProvider({ children }) {
         setStudents([]);
         setGuardianInfo(null);
         setInstructorInfo(null);
-        setAdminInfo(portal.admin || { name: portal.full_name || 'Education Admin' });
+        setStudentProfile(null);
+        setActiveStudentId(null);
+        setAdminInfo(portal.admin || { user: portal.user || null, name: portal.full_name || portal.user || null });
         setActiveProgram(portal.active_program || portal.programs?.[0]?.program || null);
         setActiveAcademicYear(null);
         setActiveEnrollmentId(null);
@@ -155,7 +181,7 @@ export function AuthProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  }, [activeStudentId]);
+  }, []);
 
 
   // Load student profile & programs
@@ -232,59 +258,6 @@ export function AuthProvider({ children }) {
   };
 
 
-  // Instant Optimistic Sign In for maximum snappiness
-  const optimisticSignIn = async (person, password) => {
-    setError(null);
-    const resolvedRole = person.role === 'Student' 
-      ? 'Student' 
-      : (person.role.includes('Faculty') || person.role.includes('Teacher')) 
-        ? 'Instructor' 
-        : 'Guardian';
-    
-    setSessionUser(person.email);
-    setRole(resolvedRole);
-
-    if (resolvedRole === 'Student') {
-      const stuId = person.studentId || 'EDU-STU-2026-00001';
-      setActiveStudentId(stuId);
-      localStorage.setItem('edu_active_student_id', stuId);
-      setStudentProfile({ 
-        name: stuId, 
-        student_name: person.name, 
-        student_email_id: person.email 
-      });
-      setActiveProgram('Standard 5');
-      setPrograms([{ program: 'Standard 5' }, { program: 'Standard 6' }]);
-      setStudentGroups([{ label: 'Standard 5 - Section A' }]);
-    } else if (resolvedRole === 'Instructor') {
-      setInstructorInfo({ name: person.name, instructor_name: person.name });
-      setActiveProgram('Standard 5');
-      setPrograms([{ program: 'Standard 5' }, { program: 'Standard 6' }]);
-      setStudentGroups([{ label: 'Standard 5 - Section A' }, { label: 'Standard 6 - Section A' }]);
-    } else if (resolvedRole === 'Guardian') {
-      setGuardianInfo({ name: 'EDU-GRD-2026-00001', guardian_name: person.name });
-      setStudents([{ student: 'EDU-STU-2026-00001', student_name: 'Rahul Sharma', relation: 'Father' }]);
-      setActiveStudentId('EDU-STU-2026-00001');
-      setActiveProgram('Standard 5');
-    }
-
-    setLoading(false);
-
-    try {
-      const res = await api.login(person.email, password);
-      const preloadedContext = res?.context || null;
-      if (preloadedContext) {
-        await bootstrap(person.email, preloadedContext);
-      }
-      return res;
-    } catch (err) {
-      setSessionUser(null);
-      setRole(null);
-      setError(err.message || 'Login failed');
-      throw err;
-    }
-  };
-
   // Login handler calling Frappe API
   const login = async (usr, pwd) => {
     setLoading(true);
@@ -302,6 +275,9 @@ export function AuthProvider({ children }) {
       setLoading(false);
     }
   };
+
+  // Backward-compatible alias: directory quick-pick sign-in now always uses the real login flow
+  const optimisticSignIn = (person, password) => login(person?.email, password);
 
   // Switch student (for guardians)
   const selectStudent = async (studentId) => {
@@ -337,69 +313,31 @@ export function AuthProvider({ children }) {
     await loadProgramContextData(activeStudentId, programName, year, enrId);
   };
 
-  const previewAsStudent = async (studentId = 'EDU-STU-2026-00001') => {
+  // Administrator preview: hydrate the portal from a real record's context.
+  // The backend (get_preview_context) restricts this to System Managers.
+  const startPreview = async (targetRole, target) => {
+    if (!target) throw new Error('A record must be selected to preview');
     setLoading(true);
-    setRole('Student');
-    setActiveStudentId(studentId);
-    await loadStudentDetails(studentId);
-    setLoading(false);
-  };
-
-  const previewAsGuardian = async (guardianName = 'Amit Sharma', studentId = 'EDU-STU-2026-00001') => {
-    setLoading(true);
-    setRole('Guardian');
-    setGuardianInfo({ name: 'EDU-GRD-2026-00001', guardian_name: guardianName });
-    setStudents([{ student: studentId, student_name: 'Rahul Sharma', relation: 'Father' }]);
-    setActiveStudentId(studentId);
-    await loadStudentDetails(studentId);
-    setLoading(false);
-  };
-
-  const previewAsInstructor = async (instructorName = 'Rajesh Patel') => {
-    setLoading(true);
-    setRole('Instructor');
-    setInstructorInfo({ name: instructorName, instructor_name: instructorName });
-    setActiveAcademicYear(null);
-    setActiveEnrollmentId(null);
+    setError(null);
     try {
-      const [progs, groups] = await Promise.all([
-        api.getAllPrograms().catch(() => []),
-        api.getAllStudentGroups().catch(() => []),
-      ]);
-      const mappedProgs = (progs || []).map(p => ({ program: p.name || p.program }));
-      const mappedGroups = (groups || []).map(g => ({ label: g.name || g.label }));
-      setPrograms(mappedProgs);
-      setStudentGroups(mappedGroups);
-      setActiveProgram(mappedProgs[0]?.program || null);
-    } catch {
-      setPrograms([]);
-      setStudentGroups([]);
+      const ctx = await api.getPreviewContext(targetRole, target);
+      if (targetRole === 'Guardian') {
+        localStorage.removeItem('edu_active_student_id');
+      }
+      await bootstrap(null, ctx);
+      return ctx;
+    } catch (err) {
+      setError(err.message || 'Preview failed');
+      setLoading(false);
+      throw err;
     }
-    setLoading(false);
   };
 
-  const previewAsAdmin = async () => {
-    setLoading(true);
-    setRole('Administrator');
-    setAdminInfo({ name: 'Education Admin' });
-    setActiveAcademicYear(null);
-    setActiveEnrollmentId(null);
-    try {
-      const [progs, groups] = await Promise.all([
-        api.getAllPrograms().catch(() => []),
-        api.getAllStudentGroups().catch(() => []),
-      ]);
-      const mappedProgs = (progs || []).map(p => ({ program: p.name || p.program }));
-      const mappedGroups = (groups || []).map(g => ({ label: g.name || g.label }));
-      setPrograms(mappedProgs);
-      setStudentGroups(mappedGroups);
-      setActiveProgram(mappedProgs[0]?.program || null);
-    } catch {
-      setPrograms([]);
-      setStudentGroups([]);
-    }
-    setLoading(false);
-  };
+  const previewAsStudent = (studentId) => startPreview('Student', studentId);
+  const previewAsGuardian = (guardianId) => startPreview('Guardian', guardianId);
+  const previewAsInstructor = (instructorId) => startPreview('Instructor', instructorId);
+  // Admin view is simply the real session context of the logged-in administrator
+  const previewAsAdmin = () => bootstrap();
 
   const logout = async () => {
     try {
@@ -410,6 +348,9 @@ export function AuthProvider({ children }) {
       setStudentProfile(null);
       setInstructorInfo(null);
       setAdminInfo(null);
+      setGuardianInfo(null);
+      setStudents([]);
+      localStorage.removeItem('edu_active_student_id');
       window.location.href = '/login';
     }
   };

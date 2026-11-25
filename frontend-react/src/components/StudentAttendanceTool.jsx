@@ -43,6 +43,12 @@ export default function StudentAttendanceTool() {
     return `${yyyy}-${mm}-${dd}`;
   };
 
+  const shiftDate = (days) => {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
   // Configuration & Tool parameters (matching Frappe DocType "Student Attendance Tool")
   const [basedOn, setBasedOn] = useState('Student Group'); // 'Student Group' | 'Course Schedule'
   const [groupBasedOn, setGroupBasedOn] = useState('Batch'); // 'Batch' | 'Course' | 'Activity'
@@ -74,8 +80,9 @@ export default function StudentAttendanceTool() {
     setLoadingMetadata(true);
     try {
       const [groupsData, schedulesData] = await Promise.all([
-        attendanceApi.getAllStudentGroups().catch(() => []),
-        attendanceApi.getCourseSchedulesForTool('all').catch(() => []),
+        attendanceApi.getAllStudentGroups(),
+        // Lectures of the last 30 days up to today (attendance cannot be marked for future lectures)
+        attendanceApi.getCourseSchedulesForTool('all', shiftDate(-30), getTodayDate()).catch(() => []),
       ]);
 
       const groups = Array.isArray(groupsData) ? groupsData : [];
@@ -93,7 +100,8 @@ export default function StudentAttendanceTool() {
 
       // If schedules available, pick first as default if user toggles to Course Schedule
       if (schedules.length > 0 && !selectedCourseSchedule) {
-        setSelectedCourseSchedule(schedules[0].name);
+        const todays = schedules.find(cs => cs.schedule_date === getTodayDate());
+        setSelectedCourseSchedule((todays || schedules[schedules.length - 1]).name);
       }
     } catch (err) {
       console.error('Failed to load attendance tool metadata:', err);
@@ -104,8 +112,8 @@ export default function StudentAttendanceTool() {
   };
 
   useEffect(() => {
-    fetchMetadata();
-  }, []);
+    if (isStaff) fetchMetadata();
+  }, [isStaff]);
 
   // Filtered student groups based on `groupBasedOn`
   const filteredStudentGroups = useMemo(() => {
@@ -121,8 +129,8 @@ export default function StudentAttendanceTool() {
       if (schedule && schedule.student_group) {
         return studentGroups.find(g => g.name === schedule.student_group) || {
           name: schedule.student_group,
-          academic_year: 'Academic Session',
-          program: schedule.program || 'Standard',
+          academic_year: schedule.academic_year || null,
+          program: schedule.program || null,
         };
       }
     }
@@ -143,12 +151,14 @@ export default function StudentAttendanceTool() {
       }
       if (currentScheduleMeta.student_group) {
         setSelectedStudentGroup(currentScheduleMeta.student_group);
+        const grp = studentGroups.find(g => g.name === currentScheduleMeta.student_group);
+        if (grp?.group_based_on) setGroupBasedOn(grp.group_based_on);
       }
     }
-  }, [basedOn, currentScheduleMeta]);
+  }, [basedOn, currentScheduleMeta, studentGroups]);
 
   // 2. Fetch Roster when inputs change
-  const fetchRoster = async () => {
+  const fetchRoster = async ({ keepFeedback = false } = {}) => {
     const targetGroup = basedOn === 'Student Group' 
       ? selectedStudentGroup 
       : (currentScheduleMeta?.student_group || selectedStudentGroup);
@@ -160,7 +170,7 @@ export default function StudentAttendanceTool() {
     }
 
     setLoadingRoster(true);
-    setFeedback(null);
+    if (!keepFeedback) setFeedback(null);
 
     try {
       // Validate date cannot be future
@@ -210,6 +220,7 @@ export default function StudentAttendanceTool() {
   };
 
   useEffect(() => {
+    if (!isStaff) return;
     if (selectedStudentGroup || (basedOn === 'Course Schedule' && selectedCourseSchedule)) {
       fetchRoster();
     }
@@ -367,7 +378,7 @@ export default function StudentAttendanceTool() {
       setShowConfirmModal(false);
 
       // Re-fetch to synchronize state with Frappe database
-      await fetchRoster();
+      await fetchRoster({ keepFeedback: true });
     } catch (err) {
       console.error('Failed to submit attendance:', err);
       setFeedback({
@@ -390,15 +401,34 @@ export default function StudentAttendanceTool() {
     setAttendanceDate(`${yyyy}-${mm}-${dd}`);
   };
 
+  if (!isStaff) {
+    return (
+      <div className="max-w-3xl mx-auto p-6 sm:p-10 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-center space-y-3">
+        <ShieldAlert className="w-8 h-8 text-amber-500 mx-auto" />
+        <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100">Staff-only tool</h2>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          The Student Attendance Tool is available to instructors and academic staff.
+        </p>
+        <button
+          type="button"
+          onClick={() => navigate('/attendance')}
+          className="px-4 py-2 min-h-[36px] rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold"
+        >
+          View Attendance Records
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-24 animate-in fade-in duration-300">
+    <div className="space-y-6 max-w-7xl mx-auto pb-40 sm:pb-24 animate-in fade-in duration-300">
       {/* 1. Header Hero Panel */}
-      <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm relative overflow-hidden">
+      <div className="p-4 sm:p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm relative overflow-hidden">
         <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
 
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
+          <div className="space-y-2 min-w-0">
+            <div className="flex items-center flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => navigate('/reports-tools')}
@@ -414,12 +444,12 @@ export default function StudentAttendanceTool() {
               </span>
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tight flex items-center gap-3">
-              <UserCheck className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
-              <span>Student Attendance Tool</span>
+            <h1 className="text-xl sm:text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tight flex items-center gap-2 sm:gap-3">
+              <UserCheck className="w-6 h-6 sm:w-8 sm:h-8 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span className="min-w-0 break-words">Student Attendance Tool</span>
             </h1>
 
-            <p className="text-sm text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
               Fast, high-precision daily attendance register for student cohorts, batches, and live scheduled classes. Directly writes and submits to Frappe <code className="text-xs font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">Student Attendance</code> records.
             </p>
           </div>
@@ -427,7 +457,7 @@ export default function StudentAttendanceTool() {
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={fetchRoster}
+              onClick={() => fetchRoster()}
               disabled={loadingRoster}
               className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition shadow-xs disabled:opacity-60"
               title="Refresh Roster from Database"
@@ -454,13 +484,14 @@ export default function StudentAttendanceTool() {
           {feedback.type === 'warning' && <AlertCircle className="w-5 h-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />}
           {feedback.type === 'info' && <Info className="w-5 h-5 shrink-0 text-blue-600 dark:text-blue-400 mt-0.5" />}
           {feedback.type === 'error' && <XCircle className="w-5 h-5 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />}
-          <div className="flex-1 text-xs font-semibold leading-relaxed">
+          <div className="flex-1 min-w-0 text-xs font-semibold leading-relaxed break-words">
             {feedback.message}
           </div>
           <button
             type="button"
             onClick={() => setFeedback(null)}
-            className="text-xs font-bold opacity-60 hover:opacity-100"
+            aria-label="Dismiss"
+            className="shrink-0 -m-1 p-1.5 text-xs font-bold opacity-60 hover:opacity-100"
           >
             ✕
           </button>
@@ -468,11 +499,11 @@ export default function StudentAttendanceTool() {
       )}
 
       {/* 3. Parameter Controls Panel (DocType Fields) */}
-      <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-6">
+      <div className="p-4 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-5 sm:space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
-          <div className="space-y-0.5">
+          <div className="space-y-0.5 min-w-0">
             <h2 className="text-sm font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wider flex items-center gap-2">
-              <Layers className="w-4 h-4 text-emerald-600" />
+              <Layers className="w-4 h-4 shrink-0 text-emerald-600" />
               <span>Attendance Scope &amp; Target Setup</span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -481,11 +512,11 @@ export default function StudentAttendanceTool() {
           </div>
 
           {/* Mode Selector (Based On) */}
-          <div className="inline-flex p-1 rounded-2xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 self-start sm:self-auto">
+          <div className="flex w-full sm:w-auto sm:inline-flex shrink-0 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 sm:self-auto">
             <button
               type="button"
               onClick={() => setBasedOn('Student Group')}
-              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              className={`flex-1 sm:flex-none whitespace-nowrap px-4 py-2 sm:py-1.5 rounded-xl text-xs font-bold transition-all ${
                 basedOn === 'Student Group'
                   ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -496,7 +527,7 @@ export default function StudentAttendanceTool() {
             <button
               type="button"
               onClick={() => setBasedOn('Course Schedule')}
-              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              className={`flex-1 sm:flex-none whitespace-nowrap px-4 py-2 sm:py-1.5 rounded-xl text-xs font-bold transition-all ${
                 basedOn === 'Course Schedule'
                   ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -529,15 +560,16 @@ export default function StudentAttendanceTool() {
               >
                 <option value="Batch">Batch (Cohort / Section)</option>
                 <option value="Course">Course (Subject-wise)</option>
+                <option value="Activity">Activity (Club / Event)</option>
               </select>
             </div>
 
             {/* Student Group Select */}
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
                 <span>{groupBasedOn === 'Course' ? 'Course Group' : 'Student Group'} <span className="text-rose-500">*</span></span>
                 {currentGroupMeta && (
-                  <span className="text-[10px] font-normal text-slate-400 font-mono">
+                  <span className="text-[11px] font-normal text-slate-400 font-mono shrink-0">
                     {currentGroupMeta.student_count || roster.length} students
                   </span>
                 )}
@@ -557,9 +589,9 @@ export default function StudentAttendanceTool() {
 
             {/* Attendance Date */}
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
                 <span>Attendance Date <span className="text-rose-500">*</span></span>
-                <span className="text-[10px] text-slate-400">Cannot be future</span>
+                <span className="text-[11px] text-slate-400 shrink-0">Cannot be future</span>
               </label>
               <input
                 type="date"
@@ -568,25 +600,25 @@ export default function StudentAttendanceTool() {
                 onChange={(e) => setAttendanceDate(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-mono"
               />
-              <div className="flex items-center gap-1.5 pt-1">
+              <div className="flex items-center flex-wrap gap-1.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setDatePreset(0)}
-                  className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-400 transition"
+                  className="px-2.5 sm:px-2 py-1.5 sm:py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-400 transition"
                 >
                   Today
                 </button>
                 <button
                   type="button"
                   onClick={() => setDatePreset(1)}
-                  className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-400 transition"
+                  className="px-2.5 sm:px-2 py-1.5 sm:py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-400 transition"
                 >
                   Yesterday
                 </button>
                 <button
                   type="button"
                   onClick={() => setDatePreset(2)}
-                  className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-400 transition"
+                  className="px-2.5 sm:px-2 py-1.5 sm:py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-400 transition"
                 >
                   2 Days Ago
                 </button>
@@ -615,25 +647,25 @@ export default function StudentAttendanceTool() {
 
             {/* Linked Schedule Info Card */}
             {currentScheduleMeta && (
-              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
-                <div className="space-y-1 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-slate-900 dark:text-slate-100">
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
+                <div className="space-y-1 text-xs min-w-0">
+                  <div className="flex items-center flex-wrap gap-2">
+                    <span className="font-extrabold text-slate-900 dark:text-slate-100 break-words min-w-0">
                       {currentScheduleMeta.course}
                     </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-200/50">
+                    <span className="text-[11px] px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-200/50">
                       {currentScheduleMeta.room || 'Classroom'}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 break-words">
                     Group: <strong>{currentScheduleMeta.student_group}</strong> • Instructor: <strong>{currentScheduleMeta.instructor_name || currentScheduleMeta.instructor}</strong>
                   </p>
                 </div>
-                <div className="text-right">
+                <div className="sm:text-right shrink-0 flex sm:block items-baseline gap-2">
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block font-mono">
                     {currentScheduleMeta.schedule_date}
                   </span>
-                  <span className="text-[10px] text-slate-400 font-mono">
+                  <span className="text-[11px] text-slate-400 font-mono">
                     {currentScheduleMeta.from_time ? String(currentScheduleMeta.from_time).substring(0, 5) : ''}
                   </span>
                 </div>
@@ -647,13 +679,13 @@ export default function StudentAttendanceTool() {
           <div className="pt-2 flex flex-wrap items-center gap-2 text-xs">
             <span className="text-slate-400 font-medium">Linked Group Context:</span>
             {currentGroupMeta.course && (
-              <span className="px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 font-bold text-[11px] border border-emerald-200/60 dark:border-emerald-800 flex items-center gap-1.5">
-                <BookOpen className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+              <span className="px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 font-bold text-[11px] border border-emerald-200/60 dark:border-emerald-800 flex items-center gap-1.5 max-w-full break-words">
+                <BookOpen className="w-3 h-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
                 <span>Subject / Course: {currentGroupMeta.course}</span>
               </span>
             )}
             <span className="px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold font-mono text-[11px]">
-              Academic Year: {currentGroupMeta.academic_year || 'Current Year'}
+              Academic Year: {currentGroupMeta.academic_year || 'Not set'}
             </span>
             {currentGroupMeta.academic_term && (
               <span className="px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold font-mono text-[11px]">
@@ -666,8 +698,8 @@ export default function StudentAttendanceTool() {
               </span>
             )}
             {stats.hasExistingAttendance && (
-              <span className="px-2.5 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold text-[11px] border border-blue-200/60 dark:border-blue-800 flex items-center gap-1.5">
-                <FileCheck2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              <span className="px-2.5 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 font-bold text-[11px] border border-blue-200/60 dark:border-blue-800 flex items-center gap-1.5 max-w-full">
+                <FileCheck2 className="w-3.5 h-3.5 shrink-0 text-blue-600 dark:text-blue-400" />
                 <span>Attendance already recorded (updates will overwrite in-place, no duplicates)</span>
               </span>
             )}
@@ -676,12 +708,12 @@ export default function StudentAttendanceTool() {
       </div>
 
       {/* 4. Live Attendance Statistics & Segmented Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-3.5">
         <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-1">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
             Enrolled Students
           </span>
-          <div className="flex items-baseline gap-2">
+          <div className="flex items-baseline flex-wrap gap-x-2">
             <span className="text-2xl font-black text-slate-900 dark:text-slate-100 font-mono">
               {stats.total}
             </span>
@@ -690,11 +722,11 @@ export default function StudentAttendanceTool() {
         </div>
 
         <div className="p-4 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/60 shadow-xs space-y-1">
-          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block flex items-center gap-1.5">
+          <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
             <CheckCircle2 className="w-3.5 h-3.5" />
             Present
           </span>
-          <div className="flex items-baseline gap-2">
+          <div className="flex items-baseline flex-wrap gap-x-2">
             <span className="text-2xl font-black text-emerald-700 dark:text-emerald-300 font-mono">
               {stats.presentCount}
             </span>
@@ -705,11 +737,11 @@ export default function StudentAttendanceTool() {
         </div>
 
         <div className="p-4 rounded-2xl bg-rose-50/60 dark:bg-rose-950/40 border border-rose-200/60 dark:border-rose-800/60 shadow-xs space-y-1">
-          <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider block flex items-center gap-1.5">
+          <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
             <XCircle className="w-3.5 h-3.5" />
             Absent
           </span>
-          <div className="flex items-baseline gap-2">
+          <div className="flex items-baseline flex-wrap gap-x-2">
             <span className="text-2xl font-black text-rose-700 dark:text-rose-300 font-mono">
               {stats.absentCount}
             </span>
@@ -720,11 +752,11 @@ export default function StudentAttendanceTool() {
         </div>
 
         <div className="p-4 rounded-2xl bg-amber-50/60 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-800/60 shadow-xs space-y-1">
-          <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider block flex items-center gap-1.5">
+          <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
             <CalendarDays className="w-3.5 h-3.5" />
             On Leave
           </span>
-          <div className="flex items-baseline gap-2">
+          <div className="flex items-baseline flex-wrap gap-x-2">
             <span className="text-2xl font-black text-amber-700 dark:text-amber-300 font-mono">
               {stats.leaveCount}
             </span>
@@ -762,7 +794,7 @@ export default function StudentAttendanceTool() {
             <button
               type="button"
               onClick={handleMarkAllPresent}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition active:scale-95"
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 min-h-[36px] flex-1 sm:flex-none whitespace-nowrap rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition active:scale-95"
             >
               <CheckCheck className="w-3.5 h-3.5" />
               <span>Mark All Present</span>
@@ -771,7 +803,7 @@ export default function StudentAttendanceTool() {
             <button
               type="button"
               onClick={handleMarkAllAbsent}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-600 dark:bg-slate-800 dark:hover:bg-rose-950/60 dark:hover:text-rose-400 text-slate-700 dark:text-slate-300 text-xs font-bold transition active:scale-95 border border-slate-200/80 dark:border-slate-700"
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 min-h-[36px] flex-1 sm:flex-none whitespace-nowrap rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-600 dark:bg-slate-800 dark:hover:bg-rose-950/60 dark:hover:text-rose-400 text-slate-700 dark:text-slate-300 text-xs font-bold transition active:scale-95 border border-slate-200/80 dark:border-slate-700"
             >
               <XCircle className="w-3.5 h-3.5" />
               <span>Mark All Absent</span>
@@ -780,7 +812,7 @@ export default function StudentAttendanceTool() {
             <button
               type="button"
               onClick={handleInvertStatus}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold transition"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 min-h-[36px] min-w-[36px] rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold transition"
               title="Invert Present / Absent"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -791,7 +823,7 @@ export default function StudentAttendanceTool() {
               <button
                 type="button"
                 onClick={handleResetToSaved}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-xs font-bold transition border border-amber-200 dark:border-amber-800"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 min-h-[36px] whitespace-nowrap rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-xs font-bold transition border border-amber-200 dark:border-amber-800"
               >
                 <span>Reset to Saved</span>
               </button>
@@ -799,22 +831,23 @@ export default function StudentAttendanceTool() {
           </div>
 
           {/* Search, Filter & View Controls */}
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {/* Search Input */}
-            <div className="relative min-w-[200px] flex-1">
+            <div className="relative min-w-0 sm:min-w-[200px] flex-1">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 placeholder="Search name, roll no..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                className="w-full pl-9 pr-8 py-2 min-h-[36px] rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
               />
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
+                  aria-label="Clear search"
+                  className="absolute right-1.5 p-1 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
                 >
                   ✕
                 </button>
@@ -826,7 +859,7 @@ export default function StudentAttendanceTool() {
               <button
                 type="button"
                 onClick={() => setViewMode('grid')}
-                className={`p-1.5 rounded-lg text-xs transition ${
+                className={`p-2 sm:p-1.5 rounded-lg text-xs transition ${
                   viewMode === 'grid'
                     ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs'
                     : 'text-slate-400 hover:text-slate-600'
@@ -838,7 +871,7 @@ export default function StudentAttendanceTool() {
               <button
                 type="button"
                 onClick={() => setViewMode('table')}
-                className={`p-1.5 rounded-lg text-xs transition ${
+                className={`p-2 sm:p-1.5 rounded-lg text-xs transition ${
                   viewMode === 'table'
                     ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs'
                     : 'text-slate-400 hover:text-slate-600'
@@ -852,11 +885,11 @@ export default function StudentAttendanceTool() {
         </div>
 
         {/* Status Filter Tabs */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pt-1 border-t border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-1.5 overflow-x-auto pt-2 sm:pt-1 border-t border-slate-100 dark:border-slate-800">
           <button
             type="button"
             onClick={() => setFilterTab('all')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+            className={`shrink-0 px-3 py-2 sm:py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
               filterTab === 'all'
                 ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
                 : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -867,7 +900,7 @@ export default function StudentAttendanceTool() {
           <button
             type="button"
             onClick={() => setFilterTab('present')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
+            className={`shrink-0 px-3 py-2 sm:py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
               filterTab === 'present'
                 ? 'bg-emerald-600 text-white'
                 : 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
@@ -879,7 +912,7 @@ export default function StudentAttendanceTool() {
           <button
             type="button"
             onClick={() => setFilterTab('absent')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
+            className={`shrink-0 px-3 py-2 sm:py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
               filterTab === 'absent'
                 ? 'bg-rose-600 text-white'
                 : 'text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40'
@@ -892,7 +925,7 @@ export default function StudentAttendanceTool() {
             <button
               type="button"
               onClick={() => setFilterTab('leave')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
+              className={`shrink-0 px-3 py-2 sm:py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
                 filterTab === 'leave'
                   ? 'bg-amber-500 text-white'
                   : 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40'
@@ -961,15 +994,15 @@ export default function StudentAttendanceTool() {
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">
                           #{s.group_roll_number || '—'}
                         </span>
-                        <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                        <h4 className="text-sm sm:text-xs font-bold text-slate-900 dark:text-slate-100 truncate min-w-0" title={s.student_name}>
                           {s.student_name}
                         </h4>
                       </div>
-                      <p className="text-[10px] text-slate-400 font-mono truncate mt-0.5">
+                      <p className="text-[11px] text-slate-400 font-mono truncate mt-0.5" title={s.student}>
                         {s.student}
                       </p>
                     </div>
@@ -978,9 +1011,9 @@ export default function StudentAttendanceTool() {
 
                 {/* Approved Leave Badge */}
                 {s.on_leave && (
-                  <div className="p-2 rounded-xl bg-amber-100/70 dark:bg-amber-950/70 border border-amber-200/80 dark:border-amber-800 text-[10px] text-amber-800 dark:text-amber-200 flex items-center gap-1.5 font-medium">
+                  <div className="p-2 rounded-xl bg-amber-100/70 dark:bg-amber-950/70 border border-amber-200/80 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-200 flex items-center gap-1.5 font-medium min-w-0">
                     <CalendarDays className="w-3.5 h-3.5 shrink-0 text-amber-600" />
-                    <span className="truncate">Leave: {s.leave_reason || 'Approved Application'}</span>
+                    <span className="truncate" title={s.leave_reason || undefined}>Leave: {s.leave_reason || 'Approved Application'}</span>
                   </div>
                 )}
 
@@ -989,7 +1022,7 @@ export default function StudentAttendanceTool() {
                   <button
                     type="button"
                     onClick={() => handleToggleStudent(s.student, 'Present')}
-                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition active:scale-95 ${
+                    className={`flex-1 py-2.5 sm:py-2 px-3 min-h-[40px] sm:min-h-0 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition active:scale-95 ${
                       isPresent
                         ? 'bg-emerald-600 text-white shadow-xs'
                         : 'bg-slate-100 hover:bg-emerald-50 dark:bg-slate-800 dark:hover:bg-emerald-950/50 text-slate-600 dark:text-slate-400'
@@ -1002,7 +1035,7 @@ export default function StudentAttendanceTool() {
                   <button
                     type="button"
                     onClick={() => handleToggleStudent(s.student, 'Absent')}
-                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition active:scale-95 ${
+                    className={`flex-1 py-2.5 sm:py-2 px-3 min-h-[40px] sm:min-h-0 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition active:scale-95 ${
                       isAbsent
                         ? 'bg-rose-600 text-white shadow-xs'
                         : 'bg-slate-100 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/50 text-slate-600 dark:text-slate-400'
@@ -1019,10 +1052,76 @@ export default function StudentAttendanceTool() {
       ) : (
         /* TABLE VIEW */
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
+          {/* Mobile compact list (< md) — easy-to-tap rows with Present / Absent toggles */}
+          <ul className="md:hidden divide-y divide-slate-100 dark:divide-slate-800/80">
+            {displayedStudents.map((s) => {
+              const currentStatus = attendanceMap[s.student] || 'Present';
+              const isPresent = currentStatus === 'Present';
+              const isAbsent = currentStatus === 'Absent';
+
+              return (
+                <li key={s.student} className="p-3.5 space-y-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center font-bold text-xs ${
+                      isPresent ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700' : 'bg-rose-100 dark:bg-rose-950 text-rose-700'
+                    }`}>
+                      {s.student_name ? s.student_name.charAt(0) : 'S'}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">
+                          #{s.group_roll_number || '—'}
+                        </span>
+                        <span className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate min-w-0" title={s.student_name}>
+                          {s.student_name}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 font-mono truncate mt-0.5" title={s.student}>
+                        {s.student}
+                      </p>
+                    </div>
+                  </div>
+                  {s.on_leave && (
+                    <div className="inline-flex max-w-full items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-bold text-[11px]">
+                      <CalendarDays className="w-3 h-3 shrink-0" />
+                      <span className="truncate">{s.leave_reason || 'Approved Leave'}</span>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleStudent(s.student, 'Present')}
+                      className={`min-h-[40px] px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition active:scale-95 ${
+                        isPresent
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Present</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleStudent(s.student, 'Absent')}
+                      className={`min-h-[40px] px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition active:scale-95 ${
+                        isAbsent
+                          ? 'bg-rose-600 text-white shadow-xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      <span>Absent</span>
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full md:min-w-[720px] text-left border-collapse text-xs">
               <thead>
-                <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200/80 dark:border-slate-800 text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200/80 dark:border-slate-800 text-[11px] uppercase font-bold text-slate-400 tracking-wider">
                   <th className="py-3.5 px-4 w-16 text-center">Roll</th>
                   <th className="py-3.5 px-4">Student Dossier</th>
                   <th className="py-3.5 px-4">Student ID</th>
@@ -1047,7 +1146,7 @@ export default function StudentAttendanceTool() {
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2.5">
-                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-[11px] ${
+                          <div className={`w-7 h-7 shrink-0 rounded-lg flex items-center justify-center font-bold text-[11px] ${
                             isPresent ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700' : 'bg-rose-100 dark:bg-rose-950 text-rose-700'
                           }`}>
                             {s.student_name ? s.student_name.charAt(0) : 'S'}
@@ -1057,12 +1156,12 @@ export default function StudentAttendanceTool() {
                           </span>
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-400">
+                      <td className="py-3.5 px-4 font-mono text-slate-400 break-all">
                         {s.student}
                       </td>
                       <td className="py-3.5 px-4">
                         {s.on_leave ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-bold text-[10px]">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-bold text-[11px]">
                             <CalendarDays className="w-3 h-3" />
                             {s.leave_reason || 'Approved Leave'}
                           </span>
@@ -1071,7 +1170,7 @@ export default function StudentAttendanceTool() {
                         )}
                       </td>
                       <td className="py-3.5 px-4 text-center">
-                        <div className="inline-flex p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60">
+                        <div className="inline-flex shrink-0 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60">
                           <button
                             type="button"
                             onClick={() => handleToggleStudent(s.student, 'Present')}
@@ -1107,13 +1206,13 @@ export default function StudentAttendanceTool() {
 
       {/* 7. Floating Action Submission Bar */}
       {roster.length > 0 && (
-        <div className="fixed bottom-6 left-0 right-0 z-30 px-4 pointer-events-none">
-          <div className="max-w-4xl mx-auto bg-slate-900/95 dark:bg-slate-950/95 text-white p-4 rounded-3xl shadow-2xl backdrop-blur-md border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pointer-events-auto">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+        <div className="fixed bottom-3 sm:bottom-6 left-0 right-0 z-30 px-3 sm:px-4 pointer-events-none print:hidden">
+          <div className="max-w-4xl mx-auto bg-slate-900/95 dark:bg-slate-950/95 text-white p-3 sm:p-4 rounded-3xl shadow-2xl backdrop-blur-md border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 pointer-events-auto">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 shrink-0 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
                 <FileCheck2 className="w-5 h-5" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs font-bold text-slate-200">
                   Ready to Submit Attendance
                 </p>
@@ -1123,7 +1222,7 @@ export default function StudentAttendanceTool() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
               <button
                 type="button"
                 onClick={() => setShowConfirmModal(true)}
@@ -1140,14 +1239,14 @@ export default function StudentAttendanceTool() {
 
       {/* 8. Confirmation Modal */}
       {showConfirmModal && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-5 animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full max-h-[90vh] overflow-y-auto my-auto p-5 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-5 animate-in fade-in zoom-in-95">
             <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto">
               <UserCheck className="w-6 h-6" />
             </div>
 
             <div className="text-center space-y-1">
-              <h3 className="text-lg font-black text-slate-900 dark:text-slate-100">
+              <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-slate-100">
                 Confirm Attendance Submission
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -1157,20 +1256,20 @@ export default function StudentAttendanceTool() {
 
             {/* Breakdown card */}
             <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Target Group:</span>
-                <strong className="text-slate-900 dark:text-slate-100 font-mono">
+              <div className="flex justify-between gap-3">
+                <span className="text-slate-500 shrink-0">Target Group:</span>
+                <strong className="text-slate-900 dark:text-slate-100 font-mono text-right break-all min-w-0">
                   {basedOn === 'Student Group' ? selectedStudentGroup : currentScheduleMeta?.student_group}
                 </strong>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Attendance Date:</span>
+              <div className="flex justify-between gap-3">
+                <span className="text-slate-500 shrink-0">Attendance Date:</span>
                 <strong className="text-slate-900 dark:text-slate-100 font-mono">{attendanceDate}</strong>
               </div>
               {basedOn === 'Course Schedule' && (
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Lecture Slot:</span>
-                  <strong className="text-slate-900 dark:text-slate-100 font-mono">{selectedCourseSchedule}</strong>
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-500 shrink-0">Lecture Slot:</span>
+                  <strong className="text-slate-900 dark:text-slate-100 font-mono text-right break-all min-w-0">{selectedCourseSchedule}</strong>
                 </div>
               )}
               <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between font-bold">
@@ -1191,9 +1290,9 @@ export default function StudentAttendanceTool() {
                 </span>
                 <div className="max-h-24 overflow-y-auto p-2.5 rounded-xl bg-rose-50/50 dark:bg-rose-950/30 border border-rose-200/60 dark:border-rose-900/40 text-[11px] text-rose-700 dark:text-rose-300 space-y-1">
                   {roster.filter(s => attendanceMap[s.student] === 'Absent').map(s => (
-                    <div key={s.student} className="flex justify-between">
-                      <span>{s.student_name}</span>
-                      <span className="font-mono opacity-70">#{s.group_roll_number || s.student}</span>
+                    <div key={s.student} className="flex justify-between gap-2">
+                      <span className="min-w-0 truncate" title={s.student_name}>{s.student_name}</span>
+                      <span className="font-mono opacity-70 shrink-0">#{s.group_roll_number || s.student}</span>
                     </div>
                   ))}
                 </div>
@@ -1210,7 +1309,7 @@ export default function StudentAttendanceTool() {
               </div>
             )}
 
-            <div className="flex items-center gap-3 pt-2">
+            <div className="flex items-center gap-2 sm:gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => setShowConfirmModal(false)}
