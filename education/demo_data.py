@@ -42,27 +42,124 @@ ROOMS = [
 INSTRUCTORS = [
     ("Rajesh", "Patel", "rajesh.patel@example.com", "Male", ("Mathematics",)),
     ("Sunita", "Rao", "sunita.rao@example.com", "Female", ("Science", "EVS")),
-    ("Vikram", "Singh", "vikram.singh@example.com", "Male", ("English", "Computer Science", "Information Technology")),
+    (
+        "Vikram",
+        "Singh",
+        "vikram.singh@example.com",
+        "Male",
+        ("English", "Computer Science", "Information Technology"),
+    ),
     ("Neha", "Kapoor", "neha.kapoor@example.com", "Female", ("Hindi", "Sanskrit")),
-    ("Arjun", "Nair", "arjun.nair@example.com", "Male", ("Social Science", "Art & Craft")),
+    (
+        "Arjun",
+        "Nair",
+        "arjun.nair@example.com",
+        "Male",
+        ("Social Science", "Art & Craft"),
+    ),
 ]
 
 # (first, last, email, gender, dob, program, blood group, city)
 STUDENTS = [
-    ("Rahul", "Sharma", "rahul.sharma@example.com", "Male", "2016-05-14", "Standard 5", "B+", "Ahmedabad"),
-    ("Priya", "Patel", "priya.patel@example.com", "Female", "2016-08-22", "Standard 5", "O+", "Ahmedabad"),
-    ("Aarav", "Mehta", "aarav.mehta@example.com", "Male", "2015-03-09", "Standard 6", "A+", "Vadodara"),
-    ("Ananya", "Shah", "ananya.shah@example.com", "Female", "2014-11-30", "Standard 7", "AB+", "Surat"),
-    ("Kavya", "Joshi", "kavya.joshi@example.com", "Female", "2013-07-18", "Standard 8", "O-", "Rajkot"),
+    (
+        "Rahul",
+        "Sharma",
+        "rahul.sharma@example.com",
+        "Male",
+        "2016-05-14",
+        "Standard 5",
+        "B+",
+        "Ahmedabad",
+    ),
+    (
+        "Priya",
+        "Patel",
+        "priya.patel@example.com",
+        "Female",
+        "2016-08-22",
+        "Standard 5",
+        "O+",
+        "Ahmedabad",
+    ),
+    (
+        "Aarav",
+        "Mehta",
+        "aarav.mehta@example.com",
+        "Male",
+        "2015-03-09",
+        "Standard 6",
+        "A+",
+        "Vadodara",
+    ),
+    (
+        "Ananya",
+        "Shah",
+        "ananya.shah@example.com",
+        "Female",
+        "2014-11-30",
+        "Standard 7",
+        "AB+",
+        "Surat",
+    ),
+    (
+        "Kavya",
+        "Joshi",
+        "kavya.joshi@example.com",
+        "Female",
+        "2013-07-18",
+        "Standard 8",
+        "O-",
+        "Rajkot",
+    ),
 ]
 
 # (first, last, email, gender, ward email, relation, occupation)
 GUARDIANS = [
-    ("Amit", "Sharma", "amit.sharma@example.com", "Male", "rahul.sharma@example.com", "Father", "Software Engineer"),
-    ("Kiran", "Patel", "kiran.patel@example.com", "Female", "priya.patel@example.com", "Mother", "Doctor"),
-    ("Sanjay", "Mehta", "sanjay.mehta@example.com", "Male", "aarav.mehta@example.com", "Father", "Businessman"),
-    ("Pooja", "Shah", "pooja.shah@example.com", "Female", "ananya.shah@example.com", "Mother", "Chartered Accountant"),
-    ("Manoj", "Joshi", "manoj.joshi@example.com", "Male", "kavya.joshi@example.com", "Father", "Bank Manager"),
+    (
+        "Amit",
+        "Sharma",
+        "amit.sharma@example.com",
+        "Male",
+        "rahul.sharma@example.com",
+        "Father",
+        "Software Engineer",
+    ),
+    (
+        "Kiran",
+        "Patel",
+        "kiran.patel@example.com",
+        "Female",
+        "priya.patel@example.com",
+        "Mother",
+        "Doctor",
+    ),
+    (
+        "Sanjay",
+        "Mehta",
+        "sanjay.mehta@example.com",
+        "Male",
+        "aarav.mehta@example.com",
+        "Father",
+        "Businessman",
+    ),
+    (
+        "Pooja",
+        "Shah",
+        "pooja.shah@example.com",
+        "Female",
+        "ananya.shah@example.com",
+        "Mother",
+        "Chartered Accountant",
+    ),
+    (
+        "Manoj",
+        "Joshi",
+        "manoj.joshi@example.com",
+        "Male",
+        "kavya.joshi@example.com",
+        "Father",
+        "Bank Manager",
+    ),
 ]
 
 PERIODS = [
@@ -92,12 +189,12 @@ def section(title):
             frappe.db.savepoint(sp)
             try:
                 fn()
-                frappe.db.commit()
+                frappe.db.commit()  # nosemgrep: frappe-manual-commit -- bench execute seed script, persist each section
                 RESULTS.append((title, "OK", ""))
                 log(f"[OK]   {title}")
             except Exception as e:
                 frappe.db.rollback(save_point=sp)
-                frappe.db.commit()
+                frappe.db.commit()  # nosemgrep: frappe-manual-commit -- bench execute seed script, keep earlier sections
                 RESULTS.append((title, "FAILED", f"{type(e).__name__}: {e}"))
                 log(f"[FAIL] {title}: {type(e).__name__}: {e}")
                 log(traceback.format_exc())
@@ -130,7 +227,9 @@ def get_or_insert(doctype, filters, values=None, submit=False):
     return doc.name
 
 
-def ensure_user(email, first_name, last_name, roles, gender=None, user_type="System User"):
+def ensure_user(
+    email, first_name, last_name, roles, gender=None, user_type="System User"
+):
     if frappe.db.exists("User", email):
         user = frappe.get_doc("User", email)
         existing = {r.role for r in user.roles}
@@ -254,9 +353,15 @@ def seed_setup():
         while d <= getdate(AY_END):
             ds = d.strftime("%Y-%m-%d")
             if d.weekday() == 6:
-                hl.append("holidays", {"holiday_date": d, "description": "Sunday", "weekly_off": 1})
+                hl.append(
+                    "holidays",
+                    {"holiday_date": d, "description": "Sunday", "weekly_off": 1},
+                )
             elif d.weekday() == 5:
-                hl.append("holidays", {"holiday_date": d, "description": "Saturday", "weekly_off": 1})
+                hl.append(
+                    "holidays",
+                    {"holiday_date": d, "description": "Saturday", "weekly_off": 1},
+                )
             elif ds in public:
                 hl.append("holidays", {"holiday_date": d, "description": public[ds]})
             d = d + timedelta(days=1)
@@ -345,14 +450,38 @@ def seed_assessment_masters():
                 "grading_scale_name": "CBSE Grading",
                 "description": "Standard grading scale for Standards 5-9",
                 "intervals": [
-                    {"grade_code": "A1", "threshold": 90, "grade_description": "Outstanding"},
-                    {"grade_code": "A2", "threshold": 80, "grade_description": "Excellent"},
-                    {"grade_code": "B1", "threshold": 70, "grade_description": "Very Good"},
+                    {
+                        "grade_code": "A1",
+                        "threshold": 90,
+                        "grade_description": "Outstanding",
+                    },
+                    {
+                        "grade_code": "A2",
+                        "threshold": 80,
+                        "grade_description": "Excellent",
+                    },
+                    {
+                        "grade_code": "B1",
+                        "threshold": 70,
+                        "grade_description": "Very Good",
+                    },
                     {"grade_code": "B2", "threshold": 60, "grade_description": "Good"},
-                    {"grade_code": "C1", "threshold": 50, "grade_description": "Above Average"},
-                    {"grade_code": "C2", "threshold": 40, "grade_description": "Average"},
+                    {
+                        "grade_code": "C1",
+                        "threshold": 50,
+                        "grade_description": "Above Average",
+                    },
+                    {
+                        "grade_code": "C2",
+                        "threshold": 40,
+                        "grade_description": "Average",
+                    },
                     {"grade_code": "D", "threshold": 33, "grade_description": "Pass"},
-                    {"grade_code": "E", "threshold": 0, "grade_description": "Needs Improvement"},
+                    {
+                        "grade_code": "E",
+                        "threshold": 0,
+                        "grade_description": "Needs Improvement",
+                    },
                 ],
             }
         )
@@ -363,8 +492,12 @@ def seed_assessment_masters():
         if gs.docstatus == 0:
             gs.submit()
 
-    get_or_insert("Assessment Criteria Group", {"assessment_criteria_group": "Scholastic"})
-    get_or_insert("Assessment Criteria Group", {"assessment_criteria_group": "Co-Scholastic"})
+    get_or_insert(
+        "Assessment Criteria Group", {"assessment_criteria_group": "Scholastic"}
+    )
+    get_or_insert(
+        "Assessment Criteria Group", {"assessment_criteria_group": "Co-Scholastic"}
+    )
     for crit, grp in [
         ("Theory", "Scholastic"),
         ("Oral", "Scholastic"),
@@ -386,7 +519,13 @@ def seed_assessment_masters():
                 "is_group": 1,
             }
         ).insert(ignore_mandatory=True, ignore_permissions=True)
-    for g in ["Unit Test 1", "Unit Test 2", "Half Yearly Exam", "Annual Exam", "Class Test"]:
+    for g in [
+        "Unit Test 1",
+        "Unit Test 2",
+        "Half Yearly Exam",
+        "Annual Exam",
+        "Class Test",
+    ]:
         get_or_insert(
             "Assessment Group",
             {"assessment_group_name": g},
@@ -446,21 +585,50 @@ CURRICULUM = {
                 (
                     "Nouns, Pronouns and Adjectives",
                     "Naming words, the words that replace them and describing words.",
-                    ("Naming and Describing Words", "<p>A <b>noun</b> names a person, place, animal or thing (Rina, Delhi, cat, pen). A <b>pronoun</b> takes the place of a noun (he, she, it, they).</p><p>An <b>adjective</b> describes a noun: a <i>tall</i> tree, <i>three</i> mangoes, a <i>red</i> kite.</p>"),
-                    ("Nouns, Pronouns and Adjectives for Class 5", "https://www.youtube.com/watch?v=CwQjSsa8VQE"),
+                    (
+                        "Naming and Describing Words",
+                        "<p>A <b>noun</b> names a person, place, animal or thing (Rina, Delhi, cat, pen). A <b>pronoun</b> takes the place of a noun (he, she, it, they).</p><p>An <b>adjective</b> describes a noun: a <i>tall</i> tree, <i>three</i> mangoes, a <i>red</i> kite.</p>",
+                    ),
+                    (
+                        "Nouns, Pronouns and Adjectives for Class 5",
+                        "https://www.youtube.com/watch?v=CwQjSsa8VQE",
+                    ),
                     [
-                        ("Which word is an adjective in 'The little girl sang a song'?", ["*little", "girl", "sang", "song"]),
-                        ("Choose the pronoun that can replace 'Rohan and I'.", ["*We", "They", "He", "Them"]),
+                        (
+                            "Which word is an adjective in 'The little girl sang a song'?",
+                            ["*little", "girl", "sang", "song"],
+                        ),
+                        (
+                            "Choose the pronoun that can replace 'Rohan and I'.",
+                            ["*We", "They", "He", "Them"],
+                        ),
                     ],
                 ),
                 (
                     "Poem: Ice-cream Man",
                     "Reading Rachel Field's poem about the ice-cream man on a hot summer day.",
-                    ("Ice-cream Man: Poem Notes", "<p>In <i>Ice-cream Man</i>, Rachel Field describes a hot summer street in the city. The ice-cream man's little cart goes trundling down the street and brings cool treats and joy to the children.</p><p>Notice the rhyming words such as <b>heat</b> and <b>street</b>.</p>"),
-                    ("Ice-cream Man Poem Explained", "https://www.youtube.com/watch?v=KnmVX-NK9GY"),
+                    (
+                        "Ice-cream Man: Poem Notes",
+                        "<p>In <i>Ice-cream Man</i>, Rachel Field describes a hot summer street in the city. The ice-cream man's little cart goes trundling down the street and brings cool treats and joy to the children.</p><p>Notice the rhyming words such as <b>heat</b> and <b>street</b>.</p>",
+                    ),
+                    (
+                        "Ice-cream Man Poem Explained",
+                        "https://www.youtube.com/watch?v=KnmVX-NK9GY",
+                    ),
                     [
-                        ("Who wrote the poem 'Ice-cream Man'?", ["*Rachel Field", "Ruskin Bond", "Rabindranath Tagore", "R.K. Narayan"]),
-                        ("In which season does the ice-cream man come trundling down the street?", ["*Summer", "Winter", "Monsoon", "Autumn"]),
+                        (
+                            "Who wrote the poem 'Ice-cream Man'?",
+                            [
+                                "*Rachel Field",
+                                "Ruskin Bond",
+                                "Rabindranath Tagore",
+                                "R.K. Narayan",
+                            ],
+                        ),
+                        (
+                            "In which season does the ice-cream man come trundling down the street?",
+                            ["*Summer", "Winter", "Monsoon", "Autumn"],
+                        ),
                     ],
                 ),
             ],
@@ -474,21 +642,60 @@ CURRICULUM = {
                 (
                     "Raakh ki Rassi (Kahani)",
                     "Tibbat ki lok-katha jismein sooj-boojh se ek kathin samasya ka hal nikala jata hai.",
-                    ("Raakh ki Rassi: Saransh", "<p><i>Raakh ki Rassi</i> Tibbat ki ek lok-katha hai. Mantri Lonpo Gar apne bete ki buddhi ki pariksha lete hain aur use raakh ki rassi laane ko kehte hain.</p><p>Kahani sikhati hai ki kathin se kathin samasya ka hal bhi <b>sooj-boojh</b> se nikal aata hai.</p>"),
-                    ("Raakh ki Rassi - Kahani Saransh", "https://www.youtube.com/watch?v=NT1MU7zKBnc"),
+                    (
+                        "Raakh ki Rassi: Saransh",
+                        "<p><i>Raakh ki Rassi</i> Tibbat ki ek lok-katha hai. Mantri Lonpo Gar apne bete ki buddhi ki pariksha lete hain aur use raakh ki rassi laane ko kehte hain.</p><p>Kahani sikhati hai ki kathin se kathin samasya ka hal bhi <b>sooj-boojh</b> se nikal aata hai.</p>",
+                    ),
+                    (
+                        "Raakh ki Rassi - Kahani Saransh",
+                        "https://www.youtube.com/watch?v=NT1MU7zKBnc",
+                    ),
                     [
-                        ("'Raakh ki Rassi' kis desh ki lok-katha hai?", ["*Tibbat", "Nepal", "Bhutan", "Sri Lanka"]),
-                        ("Is kahani se kya seekh milti hai?", ["*Buddhi se har samasya ka hal sambhav hai", "Jaldbazi achhi hoti hai", "Dhan sabse bada hai", "Khel sabse zaroori hai"]),
+                        (
+                            "'Raakh ki Rassi' kis desh ki lok-katha hai?",
+                            ["*Tibbat", "Nepal", "Bhutan", "Sri Lanka"],
+                        ),
+                        (
+                            "Is kahani se kya seekh milti hai?",
+                            [
+                                "*Buddhi se har samasya ka hal sambhav hai",
+                                "Jaldbazi achhi hoti hai",
+                                "Dhan sabse bada hai",
+                                "Khel sabse zaroori hai",
+                            ],
+                        ),
                     ],
                 ),
                 (
                     "Sangya aur Uske Bhed",
                     "Vyaktivachak, jativachak aur bhavvachak sangya ki pehchan.",
-                    ("Sangya Kya Hai?", "<p>Kisi vyakti, vastu, sthan ya bhav ke naam ko <b>sangya</b> kehte hain.</p><ul><li>Vyaktivachak: Ganga, Delhi, Ram</li><li>Jativachak: nadi, shehar, ladka</li><li>Bhavvachak: khushi, mithas, bachpan</li></ul>"),
-                    ("Sangya ke Bhed - Class 5 Vyakaran", "https://www.youtube.com/watch?v=9RDh2bpzJUQ"),
+                    (
+                        "Sangya Kya Hai?",
+                        "<p>Kisi vyakti, vastu, sthan ya bhav ke naam ko <b>sangya</b> kehte hain.</p><ul><li>Vyaktivachak: Ganga, Delhi, Ram</li><li>Jativachak: nadi, shehar, ladka</li><li>Bhavvachak: khushi, mithas, bachpan</li></ul>",
+                    ),
+                    (
+                        "Sangya ke Bhed - Class 5 Vyakaran",
+                        "https://www.youtube.com/watch?v=9RDh2bpzJUQ",
+                    ),
                     [
-                        ("'Himalaya' kaun si sangya hai?", ["*Vyaktivachak", "Jativachak", "Bhavvachak", "Samuhvachak"]),
-                        ("'Bachpan' kis prakar ki sangya hai?", ["Jativachak", "*Bhavvachak", "Vyaktivachak", "Dravyavachak"]),
+                        (
+                            "'Himalaya' kaun si sangya hai?",
+                            [
+                                "*Vyaktivachak",
+                                "Jativachak",
+                                "Bhavvachak",
+                                "Samuhvachak",
+                            ],
+                        ),
+                        (
+                            "'Bachpan' kis prakar ki sangya hai?",
+                            [
+                                "Jativachak",
+                                "*Bhavvachak",
+                                "Vyaktivachak",
+                                "Dravyavachak",
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -502,20 +709,41 @@ CURRICULUM = {
                 (
                     "Large Numbers",
                     "Reading, writing and comparing numbers up to crores using the Indian place-value system.",
-                    ("Place Value up to Crores", "<p>In the Indian system we group digits as ones, thousands, lakhs and crores: <b>1,23,45,678</b> is read as one crore twenty-three lakh forty-five thousand six hundred seventy-eight.</p><p>To compare two numbers, first count the digits; if they have the same number of digits, compare from the leftmost digit.</p>"),
-                    ("Large Numbers and Place Value", "https://www.youtube.com/watch?v=ziVMro-BbnU"),
+                    (
+                        "Place Value up to Crores",
+                        "<p>In the Indian system we group digits as ones, thousands, lakhs and crores: <b>1,23,45,678</b> is read as one crore twenty-three lakh forty-five thousand six hundred seventy-eight.</p><p>To compare two numbers, first count the digits; if they have the same number of digits, compare from the leftmost digit.</p>",
+                    ),
+                    (
+                        "Large Numbers and Place Value",
+                        "https://www.youtube.com/watch?v=ziVMro-BbnU",
+                    ),
                     [
-                        ("How many zeros are there in one lakh?", ["*5", "6", "7", "4"]),
-                        ("What is the place value of 7 in 4,73,215?", ["*70,000", "7,000", "7,00,000", "700"]),
+                        (
+                            "How many zeros are there in one lakh?",
+                            ["*5", "6", "7", "4"],
+                        ),
+                        (
+                            "What is the place value of 7 in 4,73,215?",
+                            ["*70,000", "7,000", "7,00,000", "700"],
+                        ),
                     ],
                 ),
                 (
                     "Fractions",
                     "Parts of a whole, equivalent fractions and adding like fractions.",
-                    ("Understanding Fractions", "<p>A fraction such as <b>3/4</b> means 3 out of 4 equal parts. The top number is the <i>numerator</i> and the bottom number is the <i>denominator</i>.</p><p>Multiply or divide the numerator and denominator by the same number to get <b>equivalent fractions</b>: 1/2 = 2/4 = 3/6.</p>"),
-                    ("Fractions for Class 5", "https://www.youtube.com/watch?v=hnIxLf8KLUY"),
+                    (
+                        "Understanding Fractions",
+                        "<p>A fraction such as <b>3/4</b> means 3 out of 4 equal parts. The top number is the <i>numerator</i> and the bottom number is the <i>denominator</i>.</p><p>Multiply or divide the numerator and denominator by the same number to get <b>equivalent fractions</b>: 1/2 = 2/4 = 3/6.</p>",
+                    ),
+                    (
+                        "Fractions for Class 5",
+                        "https://www.youtube.com/watch?v=hnIxLf8KLUY",
+                    ),
                     [
-                        ("Which fraction is equal to 3/5?", ["*6/10", "5/3", "3/10", "6/5"]),
+                        (
+                            "Which fraction is equal to 3/5?",
+                            ["*6/10", "5/3", "3/10", "6/5"],
+                        ),
                         ("What is 1/4 + 2/4?", ["*3/4", "3/8", "1/2", "2/8"]),
                     ],
                 ),
@@ -530,21 +758,60 @@ CURRICULUM = {
                 (
                     "Plants and Animals",
                     "The super senses of animals and how seeds grow and spread.",
-                    ("Super Senses of Animals", "<p>Animals have amazing senses. An eagle can spot a small animal from high in the sky, ants follow a smell trail to food and dogs recognise people by their smell.</p><p>Plants grow from <b>seeds</b> that need water, air and warmth to germinate. Seeds are spread by wind, water and animals.</p>"),
-                    ("Super Senses - Class 5 EVS", "https://www.youtube.com/watch?v=riSq0r5lCoU"),
+                    (
+                        "Super Senses of Animals",
+                        "<p>Animals have amazing senses. An eagle can spot a small animal from high in the sky, ants follow a smell trail to food and dogs recognise people by their smell.</p><p>Plants grow from <b>seeds</b> that need water, air and warmth to germinate. Seeds are spread by wind, water and animals.</p>",
+                    ),
+                    (
+                        "Super Senses - Class 5 EVS",
+                        "https://www.youtube.com/watch?v=riSq0r5lCoU",
+                    ),
                     [
-                        ("How do ants find their way to food?", ["*By following a smell trail", "By seeing colours", "By hearing sounds", "By touching leaves"]),
-                        ("Which of these does a seed need to germinate?", ["*Water", "Salt", "Sugar", "Oil"]),
+                        (
+                            "How do ants find their way to food?",
+                            [
+                                "*By following a smell trail",
+                                "By seeing colours",
+                                "By hearing sounds",
+                                "By touching leaves",
+                            ],
+                        ),
+                        (
+                            "Which of these does a seed need to germinate?",
+                            ["*Water", "Salt", "Sugar", "Oil"],
+                        ),
                     ],
                 ),
                 (
                     "Water",
                     "Sources of water, traditional ways of storing it and why every drop counts.",
-                    ("Every Drop Counts", "<p>Long ago people built step-wells (<i>baolis</i>) and tanks to collect rain water. Today we get water from rivers, wells, lakes and taps.</p><p><b>Rainwater harvesting</b> collects rain from rooftops so that it can be stored or used to recharge the ground water.</p>"),
-                    ("Every Drop Counts - Class 5 EVS", "https://www.youtube.com/watch?v=Q0uWF0nMqNo"),
+                    (
+                        "Every Drop Counts",
+                        "<p>Long ago people built step-wells (<i>baolis</i>) and tanks to collect rain water. Today we get water from rivers, wells, lakes and taps.</p><p><b>Rainwater harvesting</b> collects rain from rooftops so that it can be stored or used to recharge the ground water.</p>",
+                    ),
+                    (
+                        "Every Drop Counts - Class 5 EVS",
+                        "https://www.youtube.com/watch?v=Q0uWF0nMqNo",
+                    ),
                     [
-                        ("What is a 'baoli'?", ["*A step-well", "A type of boat", "A water pump", "A cooking pot"]),
-                        ("Collecting rain water from rooftops is called?", ["*Rainwater harvesting", "Irrigation", "Evaporation", "Filtration"]),
+                        (
+                            "What is a 'baoli'?",
+                            [
+                                "*A step-well",
+                                "A type of boat",
+                                "A water pump",
+                                "A cooking pot",
+                            ],
+                        ),
+                        (
+                            "Collecting rain water from rooftops is called?",
+                            [
+                                "*Rainwater harvesting",
+                                "Irrigation",
+                                "Evaporation",
+                                "Filtration",
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -558,21 +825,50 @@ CURRICULUM = {
                 (
                     "Colours and the Colour Wheel",
                     "Primary and secondary colours, and warm and cool colours.",
-                    ("Mixing Colours", "<p>The <b>primary colours</b> are red, yellow and blue. Mixing two primaries gives a secondary colour: red + yellow = orange, yellow + blue = green, blue + red = violet.</p><p>Reds and oranges feel <i>warm</i>; blues and greens feel <i>cool</i>.</p>"),
-                    ("The Colour Wheel for Kids", "https://www.youtube.com/watch?v=V7gyW-KXYFQ"),
+                    (
+                        "Mixing Colours",
+                        "<p>The <b>primary colours</b> are red, yellow and blue. Mixing two primaries gives a secondary colour: red + yellow = orange, yellow + blue = green, blue + red = violet.</p><p>Reds and oranges feel <i>warm</i>; blues and greens feel <i>cool</i>.</p>",
+                    ),
+                    (
+                        "The Colour Wheel for Kids",
+                        "https://www.youtube.com/watch?v=V7gyW-KXYFQ",
+                    ),
                     [
-                        ("Which two colours make green?", ["*Yellow and blue", "Red and blue", "Red and yellow", "Black and white"]),
-                        ("Which of these is a primary colour?", ["Green", "Orange", "*Blue", "Violet"]),
+                        (
+                            "Which two colours make green?",
+                            [
+                                "*Yellow and blue",
+                                "Red and blue",
+                                "Red and yellow",
+                                "Black and white",
+                            ],
+                        ),
+                        (
+                            "Which of these is a primary colour?",
+                            ["Green", "Orange", "*Blue", "Violet"],
+                        ),
                     ],
                 ),
                 (
                     "Paper Craft and Origami",
                     "Folding and cutting paper to make simple models.",
-                    ("Origami Basics", "<p><b>Origami</b> is the Japanese art of paper folding. Start with a square sheet and make sharp creases with your thumbnail.</p><p>Simple models to try are a boat, a cup and a jumping frog. A valley fold folds towards you; a mountain fold folds away from you.</p>"),
-                    ("Easy Origami Boat", "https://www.youtube.com/watch?v=3N7EUi3-PG8"),
+                    (
+                        "Origami Basics",
+                        "<p><b>Origami</b> is the Japanese art of paper folding. Start with a square sheet and make sharp creases with your thumbnail.</p><p>Simple models to try are a boat, a cup and a jumping frog. A valley fold folds towards you; a mountain fold folds away from you.</p>",
+                    ),
+                    (
+                        "Easy Origami Boat",
+                        "https://www.youtube.com/watch?v=3N7EUi3-PG8",
+                    ),
                     [
-                        ("Origami, the art of paper folding, comes from which country?", ["*Japan", "India", "Egypt", "Italy"]),
-                        ("What shape of paper is most often used to start an origami model?", ["*Square", "Circle", "Triangle", "Star"]),
+                        (
+                            "Origami, the art of paper folding, comes from which country?",
+                            ["*Japan", "India", "Egypt", "Italy"],
+                        ),
+                        (
+                            "What shape of paper is most often used to start an origami model?",
+                            ["*Square", "Circle", "Triangle", "Star"],
+                        ),
                     ],
                 ),
             ],
@@ -588,21 +884,55 @@ CURRICULUM = {
                 (
                     "Who Did Patrick's Homework?",
                     "A story about a boy, a tiny elf and the value of doing your own work.",
-                    ("Patrick and the Elf", "<p>Patrick hated homework. One day he caught a tiny elf who offered to do his homework in exchange for his freedom. But the elf knew very little, so Patrick had to explain everything to him - and ended up learning it all himself.</p>"),
-                    ("Who Did Patrick's Homework? Summary", "https://www.youtube.com/watch?v=P4SzdHgDu3Q"),
+                    (
+                        "Patrick and the Elf",
+                        "<p>Patrick hated homework. One day he caught a tiny elf who offered to do his homework in exchange for his freedom. But the elf knew very little, so Patrick had to explain everything to him - and ended up learning it all himself.</p>",
+                    ),
+                    (
+                        "Who Did Patrick's Homework? Summary",
+                        "https://www.youtube.com/watch?v=P4SzdHgDu3Q",
+                    ),
                     [
-                        ("Who offered to do Patrick's homework?", ["*A tiny elf", "His teacher", "His sister", "A cat"]),
-                        ("Who actually did the homework in the end?", ["*Patrick himself", "The elf", "Patrick's mother", "Patrick's friend"]),
+                        (
+                            "Who offered to do Patrick's homework?",
+                            ["*A tiny elf", "His teacher", "His sister", "A cat"],
+                        ),
+                        (
+                            "Who actually did the homework in the end?",
+                            [
+                                "*Patrick himself",
+                                "The elf",
+                                "Patrick's mother",
+                                "Patrick's friend",
+                            ],
+                        ),
                     ],
                 ),
                 (
                     "Simple Present and Simple Past",
                     "Using the simple present for habits and facts and the simple past for finished actions.",
-                    ("Present or Past?", "<p>The <b>simple present</b> tells about habits and facts: <i>The sun rises in the east.</i> The <b>simple past</b> tells about actions completed in the past: <i>We visited Jaipur last year.</i></p><p>Regular verbs add -ed (walk - walked); irregular verbs change form (go - went, eat - ate).</p>"),
-                    ("Simple Present and Simple Past Tense", "https://www.youtube.com/watch?v=ks6CHo0q19s"),
+                    (
+                        "Present or Past?",
+                        "<p>The <b>simple present</b> tells about habits and facts: <i>The sun rises in the east.</i> The <b>simple past</b> tells about actions completed in the past: <i>We visited Jaipur last year.</i></p><p>Regular verbs add -ed (walk - walked); irregular verbs change form (go - went, eat - ate).</p>",
+                    ),
+                    (
+                        "Simple Present and Simple Past Tense",
+                        "https://www.youtube.com/watch?v=ks6CHo0q19s",
+                    ),
                     [
-                        ("Choose the simple past of 'eat'.", ["*ate", "eaten", "eats", "eating"]),
-                        ("Which sentence is in the simple present tense?", ["*She walks to school every day.", "She walked to school.", "She will walk to school.", "She is walking to school."]),
+                        (
+                            "Choose the simple past of 'eat'.",
+                            ["*ate", "eaten", "eats", "eating"],
+                        ),
+                        (
+                            "Which sentence is in the simple present tense?",
+                            [
+                                "*She walks to school every day.",
+                                "She walked to school.",
+                                "She will walk to school.",
+                                "She is walking to school.",
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -616,21 +946,50 @@ CURRICULUM = {
                 (
                     "Vah Chidiya Jo (Kavita)",
                     "Kedarnath Agarwal ki kavita jismein neele pankhon wali nanhi chidiya apne baare mein batati hai.",
-                    ("Vah Chidiya Jo: Bhavarth", "<p><i>Vah Chidiya Jo</i> kavita <b>Kedarnath Agarwal</b> ne likhi hai. Neele pankhon wali chhoti si chidiya ko anaaj ke daane, nadi ka jal aur van ke geet bahut pyaare hain.</p>"),
-                    ("Vah Chidiya Jo - Class 6 Hindi", "https://www.youtube.com/watch?v=Ki5FMOGVkmc"),
+                    (
+                        "Vah Chidiya Jo: Bhavarth",
+                        "<p><i>Vah Chidiya Jo</i> kavita <b>Kedarnath Agarwal</b> ne likhi hai. Neele pankhon wali chhoti si chidiya ko anaaj ke daane, nadi ka jal aur van ke geet bahut pyaare hain.</p>",
+                    ),
+                    (
+                        "Vah Chidiya Jo - Class 6 Hindi",
+                        "https://www.youtube.com/watch?v=Ki5FMOGVkmc",
+                    ),
                     [
-                        ("'Vah Chidiya Jo' kavita ke kavi kaun hain?", ["*Kedarnath Agarwal", "Sumitranandan Pant", "Harivansh Rai Bachchan", "Mahadevi Verma"]),
-                        ("Kavita mein chidiya ke pankh kis rang ke hain?", ["*Neele", "Laal", "Peele", "Hare"]),
+                        (
+                            "'Vah Chidiya Jo' kavita ke kavi kaun hain?",
+                            [
+                                "*Kedarnath Agarwal",
+                                "Sumitranandan Pant",
+                                "Harivansh Rai Bachchan",
+                                "Mahadevi Verma",
+                            ],
+                        ),
+                        (
+                            "Kavita mein chidiya ke pankh kis rang ke hain?",
+                            ["*Neele", "Laal", "Peele", "Hare"],
+                        ),
                     ],
                 ),
                 (
                     "Sarvanam aur Visheshan",
                     "Sangya ke sthan par aane wale shabd aur sangya ki visheshta batane wale shabd.",
-                    ("Sarvanam aur Visheshan", "<p>Sangya ke sthan par prayog hone wale shabd <b>sarvanam</b> kehlate hain: main, tum, vah, ye.</p><p>Sangya ya sarvanam ki visheshta batane wale shabd <b>visheshan</b> hain: <i>meetha</i> aam, <i>kaala</i> ghoda, <i>do</i> kitabein.</p>"),
-                    ("Sarvanam aur Visheshan - Hindi Vyakaran", "https://www.youtube.com/watch?v=CMssLq5G6QA"),
+                    (
+                        "Sarvanam aur Visheshan",
+                        "<p>Sangya ke sthan par prayog hone wale shabd <b>sarvanam</b> kehlate hain: main, tum, vah, ye.</p><p>Sangya ya sarvanam ki visheshta batane wale shabd <b>visheshan</b> hain: <i>meetha</i> aam, <i>kaala</i> ghoda, <i>do</i> kitabein.</p>",
+                    ),
+                    (
+                        "Sarvanam aur Visheshan - Hindi Vyakaran",
+                        "https://www.youtube.com/watch?v=CMssLq5G6QA",
+                    ),
                     [
-                        ("'Vah school jaata hai' mein sarvanam kaun sa hai?", ["*Vah", "School", "Jaata", "Hai"]),
-                        ("'Laal gulab' mein visheshan kaun sa shabd hai?", ["*Laal", "Gulab", "Dono", "Koi nahin"]),
+                        (
+                            "'Vah school jaata hai' mein sarvanam kaun sa hai?",
+                            ["*Vah", "School", "Jaata", "Hai"],
+                        ),
+                        (
+                            "'Laal gulab' mein visheshan kaun sa shabd hai?",
+                            ["*Laal", "Gulab", "Dono", "Koi nahin"],
+                        ),
                     ],
                 ),
             ],
@@ -644,7 +1003,10 @@ CURRICULUM = {
                 (
                     "Integers",
                     "Positive and negative numbers, the number line, and adding and subtracting integers.",
-                    ("Integers on the Number Line", "<p>Integers are the numbers ..., -3, -2, -1, 0, 1, 2, 3, ... Numbers to the right of 0 on the number line are positive and those to the left are negative.</p><p>Adding a negative integer moves you to the left: 5 + (-8) = -3. Subtracting an integer is the same as adding its additive inverse: 4 - (-2) = 6.</p>"),
+                    (
+                        "Integers on the Number Line",
+                        "<p>Integers are the numbers ..., -3, -2, -1, 0, 1, 2, 3, ... Numbers to the right of 0 on the number line are positive and those to the left are negative.</p><p>Adding a negative integer moves you to the left: 5 + (-8) = -3. Subtracting an integer is the same as adding its additive inverse: 4 - (-2) = 6.</p>",
+                    ),
                     ("Integers Class 6", "https://www.youtube.com/watch?v=up5RvhBtFy8"),
                     [
                         ("What is (-7) + 4?", ["*-3", "3", "-11", "11"]),
@@ -654,11 +1016,23 @@ CURRICULUM = {
                 (
                     "Basic Geometry",
                     "Points, lines, line segments, rays, angles and polygons.",
-                    ("Points, Lines and Angles", "<p>A <b>point</b> marks an exact location. A <b>line segment</b> has two end points, a <b>ray</b> has one end point and a <b>line</b> extends endlessly in both directions.</p><p>An <b>angle</b> is formed by two rays with a common end point called the vertex.</p>"),
-                    ("Basic Geometrical Ideas Class 6", "https://www.youtube.com/watch?v=L9wBhBmvNx0"),
+                    (
+                        "Points, Lines and Angles",
+                        "<p>A <b>point</b> marks an exact location. A <b>line segment</b> has two end points, a <b>ray</b> has one end point and a <b>line</b> extends endlessly in both directions.</p><p>An <b>angle</b> is formed by two rays with a common end point called the vertex.</p>",
+                    ),
+                    (
+                        "Basic Geometrical Ideas Class 6",
+                        "https://www.youtube.com/watch?v=L9wBhBmvNx0",
+                    ),
                     [
-                        ("How many end points does a ray have?", ["*One", "Two", "None", "Three"]),
-                        ("A polygon with three sides is called a?", ["*Triangle", "Quadrilateral", "Pentagon", "Hexagon"]),
+                        (
+                            "How many end points does a ray have?",
+                            ["*One", "Two", "None", "Three"],
+                        ),
+                        (
+                            "A polygon with three sides is called a?",
+                            ["*Triangle", "Quadrilateral", "Pentagon", "Hexagon"],
+                        ),
                     ],
                 ),
             ],
@@ -672,21 +1046,55 @@ CURRICULUM = {
                 (
                     "Food and Nutrition",
                     "Components of food, a balanced diet and deficiency diseases.",
-                    ("Components of Food", "<p>Our food contains <b>carbohydrates</b> and <b>fats</b> (energy), <b>proteins</b> (body-building), <b>vitamins</b> and <b>minerals</b> (protection), along with dietary fibre and water.</p><p>A <b>balanced diet</b> has all of these in the right amounts. Lack of vitamin C causes scurvy; lack of iodine causes goitre.</p>"),
-                    ("Components of Food Class 6", "https://www.youtube.com/watch?v=yEb5pDrt_yY"),
+                    (
+                        "Components of Food",
+                        "<p>Our food contains <b>carbohydrates</b> and <b>fats</b> (energy), <b>proteins</b> (body-building), <b>vitamins</b> and <b>minerals</b> (protection), along with dietary fibre and water.</p><p>A <b>balanced diet</b> has all of these in the right amounts. Lack of vitamin C causes scurvy; lack of iodine causes goitre.</p>",
+                    ),
+                    (
+                        "Components of Food Class 6",
+                        "https://www.youtube.com/watch?v=yEb5pDrt_yY",
+                    ),
                     [
-                        ("Which nutrient is called the 'body-building' food?", ["*Proteins", "Carbohydrates", "Fats", "Vitamins"]),
-                        ("Deficiency of vitamin C causes?", ["*Scurvy", "Rickets", "Goitre", "Night blindness"]),
+                        (
+                            "Which nutrient is called the 'body-building' food?",
+                            ["*Proteins", "Carbohydrates", "Fats", "Vitamins"],
+                        ),
+                        (
+                            "Deficiency of vitamin C causes?",
+                            ["*Scurvy", "Rickets", "Goitre", "Night blindness"],
+                        ),
                     ],
                 ),
                 (
                     "Light and Shadows",
                     "Transparent, translucent and opaque objects, how shadows form and the pinhole camera.",
-                    ("How Shadows Are Formed", "<p>Light travels in straight lines. When an <b>opaque</b> object blocks light, a dark shadow forms on the other side.</p><p>Transparent objects (clear glass) let light pass; translucent objects (butter paper) let some light pass. A <b>pinhole camera</b> forms an inverted image.</p>"),
-                    ("Light, Shadows and Reflections Class 6", "https://www.youtube.com/watch?v=hPM4Oogy3x4"),
+                    (
+                        "How Shadows Are Formed",
+                        "<p>Light travels in straight lines. When an <b>opaque</b> object blocks light, a dark shadow forms on the other side.</p><p>Transparent objects (clear glass) let light pass; translucent objects (butter paper) let some light pass. A <b>pinhole camera</b> forms an inverted image.</p>",
+                    ),
+                    (
+                        "Light, Shadows and Reflections Class 6",
+                        "https://www.youtube.com/watch?v=hPM4Oogy3x4",
+                    ),
                     [
-                        ("A shadow is formed when light is blocked by a/an?", ["*Opaque object", "Transparent object", "Mirror", "Luminous object"]),
-                        ("The image formed by a pinhole camera is?", ["*Inverted", "Upright and larger", "Coloured", "Not formed at all"]),
+                        (
+                            "A shadow is formed when light is blocked by a/an?",
+                            [
+                                "*Opaque object",
+                                "Transparent object",
+                                "Mirror",
+                                "Luminous object",
+                            ],
+                        ),
+                        (
+                            "The image formed by a pinhole camera is?",
+                            [
+                                "*Inverted",
+                                "Upright and larger",
+                                "Coloured",
+                                "Not formed at all",
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -700,21 +1108,45 @@ CURRICULUM = {
                 (
                     "Early Humans and the Stone Age",
                     "Hunter-gatherers, stone tools, rock shelters and the beginning of farming.",
-                    ("From Hunting-Gathering to Growing Food", "<p>Early humans were <b>hunter-gatherers</b> who moved from place to place in search of food. They made tools from stone, wood and bone.</p><p>Sites like <b>Bhimbetka</b> in Madhya Pradesh have rock shelters with paintings. Around 12,000 years ago people began to grow crops and tame animals.</p>"),
-                    ("Hunter-Gatherers to Farmers Class 6", "https://www.youtube.com/watch?v=wQuLvmqKFDE"),
+                    (
+                        "From Hunting-Gathering to Growing Food",
+                        "<p>Early humans were <b>hunter-gatherers</b> who moved from place to place in search of food. They made tools from stone, wood and bone.</p><p>Sites like <b>Bhimbetka</b> in Madhya Pradesh have rock shelters with paintings. Around 12,000 years ago people began to grow crops and tame animals.</p>",
+                    ),
+                    (
+                        "Hunter-Gatherers to Farmers Class 6",
+                        "https://www.youtube.com/watch?v=wQuLvmqKFDE",
+                    ),
                     [
-                        ("The Bhimbetka rock shelters are in which state?", ["*Madhya Pradesh", "Rajasthan", "Gujarat", "Bihar"]),
-                        ("Early humans who moved around searching for food were called?", ["*Hunter-gatherers", "Farmers", "Traders", "Artisans"]),
+                        (
+                            "The Bhimbetka rock shelters are in which state?",
+                            ["*Madhya Pradesh", "Rajasthan", "Gujarat", "Bihar"],
+                        ),
+                        (
+                            "Early humans who moved around searching for food were called?",
+                            ["*Hunter-gatherers", "Farmers", "Traders", "Artisans"],
+                        ),
                     ],
                 ),
                 (
                     "The Earth in the Solar System",
                     "The Sun, the eight planets, the Moon and the Earth's place in the solar system.",
-                    ("Our Solar System", "<p>The solar system has the Sun and <b>eight planets</b>: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus and Neptune.</p><p>The Earth is the third planet from the Sun and the only planet known to support life. The Moon is the Earth's natural satellite.</p>"),
-                    ("The Earth in the Solar System Class 6", "https://www.youtube.com/watch?v=Al9v3jxSW1I"),
+                    (
+                        "Our Solar System",
+                        "<p>The solar system has the Sun and <b>eight planets</b>: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus and Neptune.</p><p>The Earth is the third planet from the Sun and the only planet known to support life. The Moon is the Earth's natural satellite.</p>",
+                    ),
+                    (
+                        "The Earth in the Solar System Class 6",
+                        "https://www.youtube.com/watch?v=Al9v3jxSW1I",
+                    ),
                     [
-                        ("Which is the third planet from the Sun?", ["*Earth", "Mars", "Venus", "Jupiter"]),
-                        ("The Earth's natural satellite is the?", ["*Moon", "Sun", "Mars", "Pole Star"]),
+                        (
+                            "Which is the third planet from the Sun?",
+                            ["*Earth", "Mars", "Venus", "Jupiter"],
+                        ),
+                        (
+                            "The Earth's natural satellite is the?",
+                            ["*Moon", "Sun", "Mars", "Pole Star"],
+                        ),
                     ],
                 ),
             ],
@@ -730,21 +1162,55 @@ CURRICULUM = {
                 (
                     "Three Questions",
                     "Leo Tolstoy's story of a king who seeks the answers to three important questions.",
-                    ("Three Questions: Summary", "<p>A king wanted to know the right time to begin something, the right people to listen to, and the most important thing to do. A wise hermit showed him that the most important time is <b>now</b>, the most important person is the one <b>you are with</b>, and the most important thing is to <b>do good</b> to that person.</p>"),
-                    ("Three Questions by Leo Tolstoy", "https://www.youtube.com/watch?v=wqsTeK1XYK8"),
+                    (
+                        "Three Questions: Summary",
+                        "<p>A king wanted to know the right time to begin something, the right people to listen to, and the most important thing to do. A wise hermit showed him that the most important time is <b>now</b>, the most important person is the one <b>you are with</b>, and the most important thing is to <b>do good</b> to that person.</p>",
+                    ),
+                    (
+                        "Three Questions by Leo Tolstoy",
+                        "https://www.youtube.com/watch?v=wqsTeK1XYK8",
+                    ),
                     [
-                        ("Who wrote 'Three Questions'?", ["*Leo Tolstoy", "Charles Dickens", "Mark Twain", "O. Henry"]),
-                        ("According to the hermit, the most important time is?", ["*Now", "Tomorrow", "Morning", "Night"]),
+                        (
+                            "Who wrote 'Three Questions'?",
+                            [
+                                "*Leo Tolstoy",
+                                "Charles Dickens",
+                                "Mark Twain",
+                                "O. Henry",
+                            ],
+                        ),
+                        (
+                            "According to the hermit, the most important time is?",
+                            ["*Now", "Tomorrow", "Morning", "Night"],
+                        ),
                     ],
                 ),
                 (
                     "Active and Passive Voice",
                     "Changing sentences between the active and the passive voice.",
-                    ("Active vs Passive Voice", "<p>In the <b>active voice</b> the subject does the action: <i>Riya wrote a letter.</i> In the <b>passive voice</b> the subject receives the action: <i>A letter was written by Riya.</i></p><p>Use the passive voice when the doer is unknown or less important.</p>"),
-                    ("Active and Passive Voice", "https://www.youtube.com/watch?v=1rHi6HGYjQc"),
+                    (
+                        "Active vs Passive Voice",
+                        "<p>In the <b>active voice</b> the subject does the action: <i>Riya wrote a letter.</i> In the <b>passive voice</b> the subject receives the action: <i>A letter was written by Riya.</i></p><p>Use the passive voice when the doer is unknown or less important.</p>",
+                    ),
+                    (
+                        "Active and Passive Voice",
+                        "https://www.youtube.com/watch?v=1rHi6HGYjQc",
+                    ),
                     [
-                        ("Choose the passive form of 'The cat chased the mouse.'", ["*The mouse was chased by the cat.", "The cat was chased by the mouse.", "The mouse chased the cat.", "The mouse is chasing the cat."]),
-                        ("'The cake was baked by Meena' is in which voice?", ["*Passive", "Active", "Reported", "Imperative"]),
+                        (
+                            "Choose the passive form of 'The cat chased the mouse.'",
+                            [
+                                "*The mouse was chased by the cat.",
+                                "The cat was chased by the mouse.",
+                                "The mouse chased the cat.",
+                                "The mouse is chasing the cat.",
+                            ],
+                        ),
+                        (
+                            "'The cake was baked by Meena' is in which voice?",
+                            ["*Passive", "Active", "Reported", "Imperative"],
+                        ),
                     ],
                 ),
             ],
@@ -758,21 +1224,60 @@ CURRICULUM = {
                 (
                     "Hum Panchhi Unmukt Gagan Ke (Kavita)",
                     "Shivmangal Singh 'Suman' ki kavita jo swatantrata ka mahatva batati hai.",
-                    ("Hum Panchhi Unmukt Gagan Ke: Bhavarth", "<p>Is kavita mein pinjare mein band panchhi kehte hain ki sone ki salakhon aur maide se bhi achha unhe khula aakash aur nadi ka behta jal lagta hai.</p><p>Kavita ka sandesh hai ki <b>swatantrata</b> sabse badi sampatti hai.</p>"),
-                    ("Hum Panchhi Unmukt Gagan Ke - Class 7", "https://www.youtube.com/watch?v=uvDlMa5Lu6w"),
+                    (
+                        "Hum Panchhi Unmukt Gagan Ke: Bhavarth",
+                        "<p>Is kavita mein pinjare mein band panchhi kehte hain ki sone ki salakhon aur maide se bhi achha unhe khula aakash aur nadi ka behta jal lagta hai.</p><p>Kavita ka sandesh hai ki <b>swatantrata</b> sabse badi sampatti hai.</p>",
+                    ),
+                    (
+                        "Hum Panchhi Unmukt Gagan Ke - Class 7",
+                        "https://www.youtube.com/watch?v=uvDlMa5Lu6w",
+                    ),
                     [
-                        ("'Hum Panchhi Unmukt Gagan Ke' kavita ke kavi kaun hain?", ["*Shivmangal Singh 'Suman'", "Kedarnath Agarwal", "Maithilisharan Gupt", "Suryakant Tripathi 'Nirala'"]),
-                        ("Kavita ka mukhya sandesh kya hai?", ["*Swatantrata ka mahatva", "Dhan ka mahatva", "Khel ka mahatva", "Bhojan ka mahatva"]),
+                        (
+                            "'Hum Panchhi Unmukt Gagan Ke' kavita ke kavi kaun hain?",
+                            [
+                                "*Shivmangal Singh 'Suman'",
+                                "Kedarnath Agarwal",
+                                "Maithilisharan Gupt",
+                                "Suryakant Tripathi 'Nirala'",
+                            ],
+                        ),
+                        (
+                            "Kavita ka mukhya sandesh kya hai?",
+                            [
+                                "*Swatantrata ka mahatva",
+                                "Dhan ka mahatva",
+                                "Khel ka mahatva",
+                                "Bhojan ka mahatva",
+                            ],
+                        ),
                     ],
                 ),
                 (
                     "Kriya aur Kaal",
                     "Kriya ki pehchan aur bhoot, vartamaan tatha bhavishyat kaal.",
-                    ("Kriya aur Kaal", "<p>Kaam ke hone ya karne ka bodh karane wale shabd <b>kriya</b> hain: padhna, khelna, likhna.</p><p>Kriya ke samay ko <b>kaal</b> kehte hain: <i>bhootkaal</i> (maine padha), <i>vartamaan kaal</i> (main padhta hoon), <i>bhavishyat kaal</i> (main padhunga).</p>"),
-                    ("Kriya aur Kaal - Hindi Vyakaran", "https://www.youtube.com/watch?v=BHMn4pjhVj8"),
+                    (
+                        "Kriya aur Kaal",
+                        "<p>Kaam ke hone ya karne ka bodh karane wale shabd <b>kriya</b> hain: padhna, khelna, likhna.</p><p>Kriya ke samay ko <b>kaal</b> kehte hain: <i>bhootkaal</i> (maine padha), <i>vartamaan kaal</i> (main padhta hoon), <i>bhavishyat kaal</i> (main padhunga).</p>",
+                    ),
+                    (
+                        "Kriya aur Kaal - Hindi Vyakaran",
+                        "https://www.youtube.com/watch?v=BHMn4pjhVj8",
+                    ),
                     [
-                        ("'Ritu kal Mumbai jayegi' mein kaun sa kaal hai?", ["*Bhavishyat kaal", "Bhootkaal", "Vartamaan kaal", "Koi nahin"]),
-                        ("'Bachche maidan mein khel rahe hain' mein kriya kya hai?", ["*Khel rahe hain", "Bachche", "Maidan", "Mein"]),
+                        (
+                            "'Ritu kal Mumbai jayegi' mein kaun sa kaal hai?",
+                            [
+                                "*Bhavishyat kaal",
+                                "Bhootkaal",
+                                "Vartamaan kaal",
+                                "Koi nahin",
+                            ],
+                        ),
+                        (
+                            "'Bachche maidan mein khel rahe hain' mein kriya kya hai?",
+                            ["*Khel rahe hain", "Bachche", "Maidan", "Mein"],
+                        ),
                     ],
                 ),
             ],
@@ -786,18 +1291,36 @@ CURRICULUM = {
                 (
                     "Rational Numbers",
                     "Numbers of the form p/q, their standard form and representation on the number line.",
-                    ("What Is a Rational Number?", "<p>A <b>rational number</b> can be written as p/q where p and q are integers and q is not zero, e.g. 3/5, -7/4 and 2.</p><p>A rational number is in <b>standard form</b> when q is positive and p and q have no common factor other than 1: -12/18 = -2/3.</p>"),
-                    ("Rational Numbers Class 7", "https://www.youtube.com/watch?v=iLSzMsXcvlQ"),
+                    (
+                        "What Is a Rational Number?",
+                        "<p>A <b>rational number</b> can be written as p/q where p and q are integers and q is not zero, e.g. 3/5, -7/4 and 2.</p><p>A rational number is in <b>standard form</b> when q is positive and p and q have no common factor other than 1: -12/18 = -2/3.</p>",
+                    ),
+                    (
+                        "Rational Numbers Class 7",
+                        "https://www.youtube.com/watch?v=iLSzMsXcvlQ",
+                    ),
                     [
-                        ("Which of these is NOT a rational number?", ["*5/0", "-3/4", "0", "7"]),
-                        ("The standard form of 18/-24 is?", ["*-3/4", "3/4", "-6/8", "9/-12"]),
+                        (
+                            "Which of these is NOT a rational number?",
+                            ["*5/0", "-3/4", "0", "7"],
+                        ),
+                        (
+                            "The standard form of 18/-24 is?",
+                            ["*-3/4", "3/4", "-6/8", "9/-12"],
+                        ),
                     ],
                 ),
                 (
                     "Simple Equations",
                     "Forming and solving simple linear equations in one variable.",
-                    ("Solving Simple Equations", "<p>An <b>equation</b> is a condition on a variable such that two expressions are equal, e.g. 2x + 3 = 11.</p><p>Do the same operation on both sides to keep the balance: 2x + 3 - 3 = 11 - 3, so 2x = 8 and x = 4.</p>"),
-                    ("Simple Equations Class 7", "https://www.youtube.com/watch?v=CqYXKNIDczg"),
+                    (
+                        "Solving Simple Equations",
+                        "<p>An <b>equation</b> is a condition on a variable such that two expressions are equal, e.g. 2x + 3 = 11.</p><p>Do the same operation on both sides to keep the balance: 2x + 3 - 3 = 11 - 3, so 2x = 8 and x = 4.</p>",
+                    ),
+                    (
+                        "Simple Equations Class 7",
+                        "https://www.youtube.com/watch?v=CqYXKNIDczg",
+                    ),
                     [
                         ("Solve: 3x = 21", ["*7", "18", "24", "63"]),
                         ("Solve: x + 9 = 4", ["*-5", "5", "13", "-13"]),
@@ -814,21 +1337,45 @@ CURRICULUM = {
                 (
                     "Nutrition in Plants",
                     "Photosynthesis, autotrophs and heterotrophs, and other modes of nutrition in plants.",
-                    ("How Green Plants Make Their Food", "<p>Green plants are <b>autotrophs</b>: they make their food by <b>photosynthesis</b> using carbon dioxide, water and sunlight, with the help of chlorophyll. Oxygen is released in the process.</p><p>Plants such as <i>Cuscuta</i> (amarbel) are parasites, while the pitcher plant traps and digests insects.</p>"),
-                    ("Nutrition in Plants Class 7", "https://www.youtube.com/watch?v=0cmQbPNBZhM"),
+                    (
+                        "How Green Plants Make Their Food",
+                        "<p>Green plants are <b>autotrophs</b>: they make their food by <b>photosynthesis</b> using carbon dioxide, water and sunlight, with the help of chlorophyll. Oxygen is released in the process.</p><p>Plants such as <i>Cuscuta</i> (amarbel) are parasites, while the pitcher plant traps and digests insects.</p>",
+                    ),
+                    (
+                        "Nutrition in Plants Class 7",
+                        "https://www.youtube.com/watch?v=0cmQbPNBZhM",
+                    ),
                     [
-                        ("Organisms that make their own food are called?", ["*Autotrophs", "Heterotrophs", "Parasites", "Saprotrophs"]),
-                        ("Which gas is released during photosynthesis?", ["*Oxygen", "Carbon dioxide", "Nitrogen", "Hydrogen"]),
+                        (
+                            "Organisms that make their own food are called?",
+                            ["*Autotrophs", "Heterotrophs", "Parasites", "Saprotrophs"],
+                        ),
+                        (
+                            "Which gas is released during photosynthesis?",
+                            ["*Oxygen", "Carbon dioxide", "Nitrogen", "Hydrogen"],
+                        ),
                     ],
                 ),
                 (
                     "Heat and Temperature",
                     "Measuring temperature and the transfer of heat by conduction, convection and radiation.",
-                    ("Transfer of Heat", "<p>Temperature is measured with a <b>thermometer</b>; normal human body temperature is about 37 &deg;C.</p><p>Heat travels by <b>conduction</b> in solids, by <b>convection</b> in liquids and gases, and by <b>radiation</b> without any medium - that is how the Sun's heat reaches us.</p>"),
-                    ("Heat Class 7 Science", "https://www.youtube.com/watch?v=jZpZx0iuBqk"),
+                    (
+                        "Transfer of Heat",
+                        "<p>Temperature is measured with a <b>thermometer</b>; normal human body temperature is about 37 &deg;C.</p><p>Heat travels by <b>conduction</b> in solids, by <b>convection</b> in liquids and gases, and by <b>radiation</b> without any medium - that is how the Sun's heat reaches us.</p>",
+                    ),
+                    (
+                        "Heat Class 7 Science",
+                        "https://www.youtube.com/watch?v=jZpZx0iuBqk",
+                    ),
                     [
-                        ("Normal human body temperature is about?", ["*37 °C", "25 °C", "50 °C", "100 °C"]),
-                        ("Heat from the Sun reaches the Earth by?", ["*Radiation", "Conduction", "Convection", "Evaporation"]),
+                        (
+                            "Normal human body temperature is about?",
+                            ["*37 °C", "25 °C", "50 °C", "100 °C"],
+                        ),
+                        (
+                            "Heat from the Sun reaches the Earth by?",
+                            ["*Radiation", "Conduction", "Convection", "Evaporation"],
+                        ),
                     ],
                 ),
             ],
@@ -842,21 +1389,45 @@ CURRICULUM = {
                 (
                     "Subhashitani",
                     "Neeti shlokon ka shuddh uchcharan aur unka arth.",
-                    ("Subhashitani: Shlok aur Arth", "<p><i>Subhashitani</i> path mein jeevan ke liye upyogi neeti-shlok hain. Ek prasiddh shlok hai: <b>prithivyam treeni ratnani jalam annam subhashitam</b> - prithvi par teen ratna hain: jal, anna aur sundar vachan.</p>"),
-                    ("Subhashitani - Class 7 Sanskrit", "https://www.youtube.com/watch?v=zpB7tBHmsxk"),
+                    (
+                        "Subhashitani: Shlok aur Arth",
+                        "<p><i>Subhashitani</i> path mein jeevan ke liye upyogi neeti-shlok hain. Ek prasiddh shlok hai: <b>prithivyam treeni ratnani jalam annam subhashitam</b> - prithvi par teen ratna hain: jal, anna aur sundar vachan.</p>",
+                    ),
+                    (
+                        "Subhashitani - Class 7 Sanskrit",
+                        "https://www.youtube.com/watch?v=zpB7tBHmsxk",
+                    ),
                     [
-                        ("Shlok ke anusaar prithvi par kitne ratna hain?", ["*Teen", "Do", "Chaar", "Paanch"]),
-                        ("'Subhashitam' ka arth kya hai?", ["*Sundar vachan", "Bhojan", "Jal", "Dhan"]),
+                        (
+                            "Shlok ke anusaar prithvi par kitne ratna hain?",
+                            ["*Teen", "Do", "Chaar", "Paanch"],
+                        ),
+                        (
+                            "'Subhashitam' ka arth kya hai?",
+                            ["*Sundar vachan", "Bhojan", "Jal", "Dhan"],
+                        ),
                     ],
                 ),
                 (
                     "Shabd Roop: Akaranta Shabd",
                     "Balak jaise akaranta pullinga shabdon ke roop teeno vachanon mein.",
-                    ("Balak Shabd Roop", "<p><b>Balak</b> (akaranta pullinga) - prathama vibhakti: <i>balakah, balakau, balakah</i>; dvitiya vibhakti: <i>balakam, balakau, balakan</i>.</p><p>Sanskrit mein teen vachan hote hain: ekvachan, dvivachan aur bahuvachan.</p>"),
-                    ("Balak Shabd Roop - Sanskrit", "https://www.youtube.com/watch?v=CyPATREwR44"),
+                    (
+                        "Balak Shabd Roop",
+                        "<p><b>Balak</b> (akaranta pullinga) - prathama vibhakti: <i>balakah, balakau, balakah</i>; dvitiya vibhakti: <i>balakam, balakau, balakan</i>.</p><p>Sanskrit mein teen vachan hote hain: ekvachan, dvivachan aur bahuvachan.</p>",
+                    ),
+                    (
+                        "Balak Shabd Roop - Sanskrit",
+                        "https://www.youtube.com/watch?v=CyPATREwR44",
+                    ),
                     [
-                        ("Sanskrit mein kitne vachan hote hain?", ["*Teen", "Do", "Ek", "Chaar"]),
-                        ("'Balak' shabd ka prathama vibhakti dvivachan roop kya hai?", ["*Balakau", "Balakah", "Balakam", "Balakan"]),
+                        (
+                            "Sanskrit mein kitne vachan hote hain?",
+                            ["*Teen", "Do", "Ek", "Chaar"],
+                        ),
+                        (
+                            "'Balak' shabd ka prathama vibhakti dvivachan roop kya hai?",
+                            ["*Balakau", "Balakah", "Balakam", "Balakan"],
+                        ),
                     ],
                 ),
             ],
@@ -872,21 +1443,50 @@ CURRICULUM = {
                 (
                     "The Best Christmas Present in the World",
                     "Michael Morpurgo's story of a letter written during the Christmas truce of 1914.",
-                    ("A Letter from 1914", "<p>The narrator finds a letter in an old desk. Written by Jim Macpherson to his wife Connie, it describes the <b>Christmas truce of 1914</b>, when British and German soldiers stopped fighting, shared food and played football in no man's land.</p>"),
-                    ("The Best Christmas Present in the World - Summary", "https://www.youtube.com/watch?v=JiLis0KBQf0"),
+                    (
+                        "A Letter from 1914",
+                        "<p>The narrator finds a letter in an old desk. Written by Jim Macpherson to his wife Connie, it describes the <b>Christmas truce of 1914</b>, when British and German soldiers stopped fighting, shared food and played football in no man's land.</p>",
+                    ),
+                    (
+                        "The Best Christmas Present in the World - Summary",
+                        "https://www.youtube.com/watch?v=JiLis0KBQf0",
+                    ),
                     [
-                        ("Who wrote the letter found in the old desk?", ["*Jim Macpherson", "Hans Wolf", "Connie", "The narrator"]),
-                        ("In which year did the Christmas truce in the story take place?", ["*1914", "1945", "1918", "1939"]),
+                        (
+                            "Who wrote the letter found in the old desk?",
+                            ["*Jim Macpherson", "Hans Wolf", "Connie", "The narrator"],
+                        ),
+                        (
+                            "In which year did the Christmas truce in the story take place?",
+                            ["*1914", "1945", "1918", "1939"],
+                        ),
                     ],
                 ),
                 (
                     "Reported Speech",
                     "Converting direct speech into indirect (reported) speech.",
-                    ("Direct and Reported Speech", "<p>Direct speech quotes the exact words: <i>Ravi said, \"I am tired.\"</i> Reported speech gives the meaning without quotation marks: <i>Ravi said that he was tired.</i></p><p>When the reporting verb is in the past tense, the tense usually moves one step back (am - was, will - would).</p>"),
-                    ("Direct and Indirect Speech", "https://www.youtube.com/watch?v=VxHCs9W7tW4"),
+                    (
+                        "Direct and Reported Speech",
+                        '<p>Direct speech quotes the exact words: <i>Ravi said, "I am tired."</i> Reported speech gives the meaning without quotation marks: <i>Ravi said that he was tired.</i></p><p>When the reporting verb is in the past tense, the tense usually moves one step back (am - was, will - would).</p>',
+                    ),
+                    (
+                        "Direct and Indirect Speech",
+                        "https://www.youtube.com/watch?v=VxHCs9W7tW4",
+                    ),
                     [
-                        ("Change to reported speech: She said, \"I like mangoes.\"", ["*She said that she liked mangoes.", "She said that I like mangoes.", "She says she liked mangoes.", "She said that she will like mangoes."]),
-                        ("In reported speech, 'will' usually changes to?", ["*would", "shall", "can", "may"]),
+                        (
+                            'Change to reported speech: She said, "I like mangoes."',
+                            [
+                                "*She said that she liked mangoes.",
+                                "She said that I like mangoes.",
+                                "She says she liked mangoes.",
+                                "She said that she will like mangoes.",
+                            ],
+                        ),
+                        (
+                            "In reported speech, 'will' usually changes to?",
+                            ["*would", "shall", "can", "may"],
+                        ),
                     ],
                 ),
             ],
@@ -900,21 +1500,42 @@ CURRICULUM = {
                 (
                     "Linear Equations",
                     "Solving linear equations in one variable, including variables on both sides.",
-                    ("Linear Equations in One Variable", "<p>A <b>linear equation</b> has the highest power of the variable equal to 1, e.g. 2x - 3 = x + 5.</p><p>Move the variable terms to one side and the constants to the other: 2x - x = 5 + 3, so x = 8. Always check by substituting the answer back.</p>"),
-                    ("Linear Equations in One Variable Class 8", "https://www.youtube.com/watch?v=lgYR2FOs_Kg"),
+                    (
+                        "Linear Equations in One Variable",
+                        "<p>A <b>linear equation</b> has the highest power of the variable equal to 1, e.g. 2x - 3 = x + 5.</p><p>Move the variable terms to one side and the constants to the other: 2x - x = 5 + 3, so x = 8. Always check by substituting the answer back.</p>",
+                    ),
+                    (
+                        "Linear Equations in One Variable Class 8",
+                        "https://www.youtube.com/watch?v=lgYR2FOs_Kg",
+                    ),
                     [
                         ("Solve: 5x - 4 = 3x + 6", ["*5", "1", "10", "-5"]),
-                        ("Which of these is a linear equation?", ["*2y + 7 = 15", "y² = 9", "xy = 4", "x³ + 1 = 0"]),
+                        (
+                            "Which of these is a linear equation?",
+                            ["*2y + 7 = 15", "y² = 9", "xy = 4", "x³ + 1 = 0"],
+                        ),
                     ],
                 ),
                 (
                     "Mensuration",
                     "Area of a trapezium and polygons; surface area and volume of a cube, cuboid and cylinder.",
-                    ("Area and Volume", "<p>Area of a <b>trapezium</b> = 1/2 x (sum of the parallel sides) x height.</p><p>Volume of a <b>cuboid</b> = l x b x h; volume of a <b>cube</b> = a³; volume of a <b>cylinder</b> = &pi;r²h.</p>"),
-                    ("Mensuration Class 8", "https://www.youtube.com/watch?v=goU7A8M1xQc"),
+                    (
+                        "Area and Volume",
+                        "<p>Area of a <b>trapezium</b> = 1/2 x (sum of the parallel sides) x height.</p><p>Volume of a <b>cuboid</b> = l x b x h; volume of a <b>cube</b> = a³; volume of a <b>cylinder</b> = &pi;r²h.</p>",
+                    ),
+                    (
+                        "Mensuration Class 8",
+                        "https://www.youtube.com/watch?v=goU7A8M1xQc",
+                    ),
                     [
-                        ("The volume of a cube of side 4 cm is?", ["*64 cm³", "16 cm³", "48 cm³", "12 cm³"]),
-                        ("The area of a trapezium with parallel sides 6 cm and 10 cm and height 4 cm is?", ["*32 cm²", "64 cm²", "40 cm²", "24 cm²"]),
+                        (
+                            "The volume of a cube of side 4 cm is?",
+                            ["*64 cm³", "16 cm³", "48 cm³", "12 cm³"],
+                        ),
+                        (
+                            "The area of a trapezium with parallel sides 6 cm and 10 cm and height 4 cm is?",
+                            ["*32 cm²", "64 cm²", "40 cm²", "24 cm²"],
+                        ),
                     ],
                 ),
             ],
@@ -928,21 +1549,55 @@ CURRICULUM = {
                 (
                     "Microorganisms: Friend and Foe",
                     "Bacteria, fungi, protozoa, algae and viruses - useful and harmful microbes.",
-                    ("The World of Microbes", "<p>Microorganisms are too small to be seen without a microscope. <b>Lactobacillus</b> turns milk into curd, yeast makes dough rise, and <i>Rhizobium</i> fixes nitrogen in the root nodules of pulses.</p><p>Some microbes cause diseases such as malaria (protozoa), cholera (bacteria) and the common cold (virus).</p>"),
-                    ("Microorganisms Friend and Foe Class 8", "https://www.youtube.com/watch?v=zIqZUC2bcSU"),
+                    (
+                        "The World of Microbes",
+                        "<p>Microorganisms are too small to be seen without a microscope. <b>Lactobacillus</b> turns milk into curd, yeast makes dough rise, and <i>Rhizobium</i> fixes nitrogen in the root nodules of pulses.</p><p>Some microbes cause diseases such as malaria (protozoa), cholera (bacteria) and the common cold (virus).</p>",
+                    ),
+                    (
+                        "Microorganisms Friend and Foe Class 8",
+                        "https://www.youtube.com/watch?v=zIqZUC2bcSU",
+                    ),
                     [
-                        ("Which bacterium helps convert milk into curd?", ["*Lactobacillus", "Rhizobium", "Yeast", "Plasmodium"]),
-                        ("Malaria is caused by a?", ["*Protozoan", "Virus", "Fungus", "Alga"]),
+                        (
+                            "Which bacterium helps convert milk into curd?",
+                            ["*Lactobacillus", "Rhizobium", "Yeast", "Plasmodium"],
+                        ),
+                        (
+                            "Malaria is caused by a?",
+                            ["*Protozoan", "Virus", "Fungus", "Alga"],
+                        ),
                     ],
                 ),
                 (
                     "Force and Pressure",
                     "Push and pull, contact and non-contact forces, and pressure in liquids and gases.",
-                    ("Understanding Pressure", "<p>A <b>force</b> is a push or a pull. Muscular force and friction are contact forces; magnetic, electrostatic and gravitational forces are non-contact forces.</p><p><b>Pressure</b> = force / area. That is why a sharp knife (small area) cuts better than a blunt one.</p>"),
-                    ("Force and Pressure Class 8", "https://www.youtube.com/watch?v=PqegJUGFtVM"),
+                    (
+                        "Understanding Pressure",
+                        "<p>A <b>force</b> is a push or a pull. Muscular force and friction are contact forces; magnetic, electrostatic and gravitational forces are non-contact forces.</p><p><b>Pressure</b> = force / area. That is why a sharp knife (small area) cuts better than a blunt one.</p>",
+                    ),
+                    (
+                        "Force and Pressure Class 8",
+                        "https://www.youtube.com/watch?v=PqegJUGFtVM",
+                    ),
                     [
-                        ("Pressure is defined as?", ["*Force per unit area", "Force x area", "Mass per unit volume", "Area per unit force"]),
-                        ("Which of these is a non-contact force?", ["*Magnetic force", "Friction", "Muscular force", "Tension in a rope"]),
+                        (
+                            "Pressure is defined as?",
+                            [
+                                "*Force per unit area",
+                                "Force x area",
+                                "Mass per unit volume",
+                                "Area per unit force",
+                            ],
+                        ),
+                        (
+                            "Which of these is a non-contact force?",
+                            [
+                                "*Magnetic force",
+                                "Friction",
+                                "Muscular force",
+                                "Tension in a rope",
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -956,21 +1611,60 @@ CURRICULUM = {
                 (
                     "The Indian Constitution",
                     "Why a country needs a constitution and the key features of the Indian Constitution.",
-                    ("Key Features of the Constitution", "<p>The Constitution of India came into effect on <b>26 January 1950</b>. Dr B.R. Ambedkar was the chairman of its Drafting Committee.</p><p>Its key features include federalism, a parliamentary form of government, separation of powers, Fundamental Rights and secularism.</p>"),
-                    ("The Indian Constitution Class 8", "https://www.youtube.com/watch?v=kh5_GlJ_hqA"),
+                    (
+                        "Key Features of the Constitution",
+                        "<p>The Constitution of India came into effect on <b>26 January 1950</b>. Dr B.R. Ambedkar was the chairman of its Drafting Committee.</p><p>Its key features include federalism, a parliamentary form of government, separation of powers, Fundamental Rights and secularism.</p>",
+                    ),
+                    (
+                        "The Indian Constitution Class 8",
+                        "https://www.youtube.com/watch?v=kh5_GlJ_hqA",
+                    ),
                     [
-                        ("The Indian Constitution came into effect on?", ["*26 January 1950", "15 August 1947", "26 November 1949", "2 October 1950"]),
-                        ("Who was the chairman of the Drafting Committee of the Constitution?", ["*Dr B.R. Ambedkar", "Jawaharlal Nehru", "Mahatma Gandhi", "Sardar Patel"]),
+                        (
+                            "The Indian Constitution came into effect on?",
+                            [
+                                "*26 January 1950",
+                                "15 August 1947",
+                                "26 November 1949",
+                                "2 October 1950",
+                            ],
+                        ),
+                        (
+                            "Who was the chairman of the Drafting Committee of the Constitution?",
+                            [
+                                "*Dr B.R. Ambedkar",
+                                "Jawaharlal Nehru",
+                                "Mahatma Gandhi",
+                                "Sardar Patel",
+                            ],
+                        ),
                     ],
                 ),
                 (
                     "Resources and Their Conservation",
                     "Natural, human-made and human resources, and sustainable development.",
-                    ("Using Resources Wisely", "<p>Anything that can be used to satisfy a human need is a <b>resource</b>. Renewable resources such as solar and wind energy are replenished quickly; non-renewable resources like coal and petroleum are limited.</p><p><b>Sustainable development</b> means using resources carefully so that future generations also have enough.</p>"),
-                    ("Resources Class 8 Geography", "https://www.youtube.com/watch?v=9gwi0kWspoE"),
+                    (
+                        "Using Resources Wisely",
+                        "<p>Anything that can be used to satisfy a human need is a <b>resource</b>. Renewable resources such as solar and wind energy are replenished quickly; non-renewable resources like coal and petroleum are limited.</p><p><b>Sustainable development</b> means using resources carefully so that future generations also have enough.</p>",
+                    ),
+                    (
+                        "Resources Class 8 Geography",
+                        "https://www.youtube.com/watch?v=9gwi0kWspoE",
+                    ),
                     [
-                        ("Which of these is a non-renewable resource?", ["*Coal", "Solar energy", "Wind energy", "Water"]),
-                        ("Using resources so that future generations also benefit is called?", ["*Sustainable development", "Urbanisation", "Industrialisation", "Globalisation"]),
+                        (
+                            "Which of these is a non-renewable resource?",
+                            ["*Coal", "Solar energy", "Wind energy", "Water"],
+                        ),
+                        (
+                            "Using resources so that future generations also benefit is called?",
+                            [
+                                "*Sustainable development",
+                                "Urbanisation",
+                                "Industrialisation",
+                                "Globalisation",
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -984,21 +1678,55 @@ CURRICULUM = {
                 (
                     "Algorithms and Flowcharts",
                     "Writing step-by-step solutions and drawing them with flowchart symbols.",
-                    ("From Algorithm to Flowchart", "<p>An <b>algorithm</b> is a finite set of clear steps to solve a problem. A <b>flowchart</b> shows those steps as a diagram.</p><p>Common symbols: oval = start/stop, parallelogram = input/output, rectangle = process, diamond = decision.</p>"),
-                    ("Algorithms and Flowcharts for Beginners", "https://www.youtube.com/watch?v=QCBV_KrB4wk"),
+                    (
+                        "From Algorithm to Flowchart",
+                        "<p>An <b>algorithm</b> is a finite set of clear steps to solve a problem. A <b>flowchart</b> shows those steps as a diagram.</p><p>Common symbols: oval = start/stop, parallelogram = input/output, rectangle = process, diamond = decision.</p>",
+                    ),
+                    (
+                        "Algorithms and Flowcharts for Beginners",
+                        "https://www.youtube.com/watch?v=QCBV_KrB4wk",
+                    ),
                     [
-                        ("Which flowchart symbol is used for a decision?", ["*Diamond", "Oval", "Rectangle", "Parallelogram"]),
-                        ("A step-by-step method to solve a problem is called a/an?", ["*Algorithm", "Compiler", "Browser", "Hardware"]),
+                        (
+                            "Which flowchart symbol is used for a decision?",
+                            ["*Diamond", "Oval", "Rectangle", "Parallelogram"],
+                        ),
+                        (
+                            "A step-by-step method to solve a problem is called a/an?",
+                            ["*Algorithm", "Compiler", "Browser", "Hardware"],
+                        ),
                     ],
                 ),
                 (
                     "Introduction to HTML",
                     "Structure of a web page: tags, headings, paragraphs, links and images.",
-                    ("Your First Web Page", "<p><b>HTML</b> (HyperText Markup Language) describes the structure of a web page using tags. Every page has <code>&lt;html&gt;</code>, <code>&lt;head&gt;</code> and <code>&lt;body&gt;</code> sections.</p><p>Use <code>&lt;h1&gt;</code> for headings, <code>&lt;p&gt;</code> for paragraphs, <code>&lt;a&gt;</code> for links and <code>&lt;img&gt;</code> for images.</p>"),
-                    ("HTML Basics for Beginners", "https://www.youtube.com/watch?v=HcOc7P5BMi4"),
+                    (
+                        "Your First Web Page",
+                        "<p><b>HTML</b> (HyperText Markup Language) describes the structure of a web page using tags. Every page has <code>&lt;html&gt;</code>, <code>&lt;head&gt;</code> and <code>&lt;body&gt;</code> sections.</p><p>Use <code>&lt;h1&gt;</code> for headings, <code>&lt;p&gt;</code> for paragraphs, <code>&lt;a&gt;</code> for links and <code>&lt;img&gt;</code> for images.</p>",
+                    ),
+                    (
+                        "HTML Basics for Beginners",
+                        "https://www.youtube.com/watch?v=HcOc7P5BMi4",
+                    ),
                     [
-                        ("What does HTML stand for?", ["*HyperText Markup Language", "High Text Machine Language", "Hyperlink and Text Markup Language", "Home Tool Markup Language"]),
-                        ("Which HTML tag is used to create a hyperlink?", ["*The anchor (a) tag", "The paragraph (p) tag", "The image (img) tag", "The heading (h1) tag"]),
+                        (
+                            "What does HTML stand for?",
+                            [
+                                "*HyperText Markup Language",
+                                "High Text Machine Language",
+                                "Hyperlink and Text Markup Language",
+                                "Home Tool Markup Language",
+                            ],
+                        ),
+                        (
+                            "Which HTML tag is used to create a hyperlink?",
+                            [
+                                "*The anchor (a) tag",
+                                "The paragraph (p) tag",
+                                "The image (img) tag",
+                                "The heading (h1) tag",
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -1014,21 +1742,50 @@ CURRICULUM = {
                 (
                     "The Fun They Had",
                     "Isaac Asimov's story about school in the year 2157.",
-                    ("School in 2157", "<p>In Isaac Asimov's story, Margie and Tommy live in the year <b>2157</b> and learn from mechanical teachers at home. When Tommy finds a real printed book about old schools, Margie imagines how much fun children must have had learning together.</p>"),
-                    ("The Fun They Had - Explanation", "https://www.youtube.com/watch?v=hlphs8Lx_0c"),
+                    (
+                        "School in 2157",
+                        "<p>In Isaac Asimov's story, Margie and Tommy live in the year <b>2157</b> and learn from mechanical teachers at home. When Tommy finds a real printed book about old schools, Margie imagines how much fun children must have had learning together.</p>",
+                    ),
+                    (
+                        "The Fun They Had - Explanation",
+                        "https://www.youtube.com/watch?v=hlphs8Lx_0c",
+                    ),
                     [
-                        ("Who wrote 'The Fun They Had'?", ["*Isaac Asimov", "Ruskin Bond", "Rudyard Kipling", "Roald Dahl"]),
-                        ("In which year is the story 'The Fun They Had' set?", ["*2157", "2057", "2257", "1957"]),
+                        (
+                            "Who wrote 'The Fun They Had'?",
+                            [
+                                "*Isaac Asimov",
+                                "Ruskin Bond",
+                                "Rudyard Kipling",
+                                "Roald Dahl",
+                            ],
+                        ),
+                        (
+                            "In which year is the story 'The Fun They Had' set?",
+                            ["*2157", "2057", "2257", "1957"],
+                        ),
                     ],
                 ),
                 (
                     "Modals",
                     "Using can, could, may, might, must, should, will and would.",
-                    ("Using Modal Verbs", "<p><b>Modals</b> are helping verbs that express ability, permission, possibility or obligation.</p><p><i>I can swim</i> (ability), <i>May I come in?</i> (permission), <i>It might rain</i> (possibility), <i>You must wear a helmet</i> (obligation).</p>"),
-                    ("Modals English Grammar", "https://www.youtube.com/watch?v=padtwaoqogA"),
+                    (
+                        "Using Modal Verbs",
+                        "<p><b>Modals</b> are helping verbs that express ability, permission, possibility or obligation.</p><p><i>I can swim</i> (ability), <i>May I come in?</i> (permission), <i>It might rain</i> (possibility), <i>You must wear a helmet</i> (obligation).</p>",
+                    ),
+                    (
+                        "Modals English Grammar",
+                        "https://www.youtube.com/watch?v=padtwaoqogA",
+                    ),
                     [
-                        ("Which modal expresses obligation?", ["*must", "might", "could", "may"]),
-                        ("Fill in the blank: ___ I borrow your pen, please?", ["*May", "Must", "Should", "Would have"]),
+                        (
+                            "Which modal expresses obligation?",
+                            ["*must", "might", "could", "may"],
+                        ),
+                        (
+                            "Fill in the blank: ___ I borrow your pen, please?",
+                            ["*May", "Must", "Should", "Would have"],
+                        ),
                     ],
                 ),
             ],
@@ -1042,8 +1799,14 @@ CURRICULUM = {
                 (
                     "Polynomials",
                     "Degree of a polynomial, zeroes, the remainder theorem and factorisation.",
-                    ("Polynomials and Their Zeroes", "<p>A <b>polynomial</b> in x is an expression like 3x² - 5x + 2. Its <b>degree</b> is the highest power of x.</p><p>A <b>zero</b> of p(x) is a value of x for which p(x) = 0. By the <b>Remainder Theorem</b>, when p(x) is divided by (x - a), the remainder is p(a).</p>"),
-                    ("Polynomials Class 9", "https://www.youtube.com/watch?v=4VHrvMutJQw"),
+                    (
+                        "Polynomials and Their Zeroes",
+                        "<p>A <b>polynomial</b> in x is an expression like 3x² - 5x + 2. Its <b>degree</b> is the highest power of x.</p><p>A <b>zero</b> of p(x) is a value of x for which p(x) = 0. By the <b>Remainder Theorem</b>, when p(x) is divided by (x - a), the remainder is p(a).</p>",
+                    ),
+                    (
+                        "Polynomials Class 9",
+                        "https://www.youtube.com/watch?v=4VHrvMutJQw",
+                    ),
                     [
                         ("What is the degree of 4x³ - 2x + 7?", ["*3", "1", "4", "7"]),
                         ("A zero of p(x) = x - 5 is?", ["*5", "-5", "0", "1/5"]),
@@ -1052,11 +1815,28 @@ CURRICULUM = {
                 (
                     "Coordinate Geometry",
                     "The Cartesian plane, axes, quadrants and plotting points.",
-                    ("The Cartesian Plane", "<p>The <b>Cartesian plane</b> is formed by two perpendicular number lines, the x-axis and the y-axis, meeting at the <b>origin</b> (0, 0).</p><p>A point is written as (x, y). The axes divide the plane into four quadrants; in Quadrant II, x is negative and y is positive.</p>"),
-                    ("Coordinate Geometry Class 9", "https://www.youtube.com/watch?v=3MIZUl6bWxY"),
+                    (
+                        "The Cartesian Plane",
+                        "<p>The <b>Cartesian plane</b> is formed by two perpendicular number lines, the x-axis and the y-axis, meeting at the <b>origin</b> (0, 0).</p><p>A point is written as (x, y). The axes divide the plane into four quadrants; in Quadrant II, x is negative and y is positive.</p>",
+                    ),
+                    (
+                        "Coordinate Geometry Class 9",
+                        "https://www.youtube.com/watch?v=3MIZUl6bWxY",
+                    ),
                     [
-                        ("The point (-3, 4) lies in which quadrant?", ["*Quadrant II", "Quadrant I", "Quadrant III", "Quadrant IV"]),
-                        ("The coordinates of the origin are?", ["*(0, 0)", "(1, 1)", "(0, 1)", "(1, 0)"]),
+                        (
+                            "The point (-3, 4) lies in which quadrant?",
+                            [
+                                "*Quadrant II",
+                                "Quadrant I",
+                                "Quadrant III",
+                                "Quadrant IV",
+                            ],
+                        ),
+                        (
+                            "The coordinates of the origin are?",
+                            ["*(0, 0)", "(1, 1)", "(0, 1)", "(1, 0)"],
+                        ),
                     ],
                 ),
             ],
@@ -1070,21 +1850,50 @@ CURRICULUM = {
                 (
                     "Matter in Our Surroundings",
                     "The particle nature of matter, states of matter and their interconversion.",
-                    ("States of Matter and Change of State", "<p>Matter is made of tiny particles with spaces between them; the particles are continuously moving and attract each other.</p><p>Matter changes state with temperature: ice melts at 0 &deg;C and water boils at 100 &deg;C at normal atmospheric pressure. <b>Evaporation</b> causes cooling.</p>"),
-                    ("Matter in Our Surroundings Class 9", "https://www.youtube.com/watch?v=bmzDsWMSCTk"),
+                    (
+                        "States of Matter and Change of State",
+                        "<p>Matter is made of tiny particles with spaces between them; the particles are continuously moving and attract each other.</p><p>Matter changes state with temperature: ice melts at 0 &deg;C and water boils at 100 &deg;C at normal atmospheric pressure. <b>Evaporation</b> causes cooling.</p>",
+                    ),
+                    (
+                        "Matter in Our Surroundings Class 9",
+                        "https://www.youtube.com/watch?v=bmzDsWMSCTk",
+                    ),
                     [
-                        ("The boiling point of water at normal atmospheric pressure is?", ["*100 °C", "0 °C", "50 °C", "273 °C"]),
-                        ("The change of a solid directly into a gas is called?", ["*Sublimation", "Evaporation", "Condensation", "Fusion"]),
+                        (
+                            "The boiling point of water at normal atmospheric pressure is?",
+                            ["*100 °C", "0 °C", "50 °C", "273 °C"],
+                        ),
+                        (
+                            "The change of a solid directly into a gas is called?",
+                            ["*Sublimation", "Evaporation", "Condensation", "Fusion"],
+                        ),
                     ],
                 ),
                 (
                     "The Fundamental Unit of Life",
                     "Cell structure, cell organelles and the differences between plant and animal cells.",
-                    ("The Cell", "<p>The <b>cell</b> is the basic structural and functional unit of life. Robert Hooke first observed cells in a slice of cork in 1665.</p><p>The nucleus controls the activities of the cell, mitochondria are the 'powerhouses' of the cell, and plant cells have a cell wall and chloroplasts that animal cells lack.</p>"),
-                    ("The Fundamental Unit of Life Class 9", "https://www.youtube.com/watch?v=StKYyqO8Uvo"),
+                    (
+                        "The Cell",
+                        "<p>The <b>cell</b> is the basic structural and functional unit of life. Robert Hooke first observed cells in a slice of cork in 1665.</p><p>The nucleus controls the activities of the cell, mitochondria are the 'powerhouses' of the cell, and plant cells have a cell wall and chloroplasts that animal cells lack.</p>",
+                    ),
+                    (
+                        "The Fundamental Unit of Life Class 9",
+                        "https://www.youtube.com/watch?v=StKYyqO8Uvo",
+                    ),
                     [
-                        ("Which organelle is known as the powerhouse of the cell?", ["*Mitochondria", "Nucleus", "Ribosome", "Golgi apparatus"]),
-                        ("Who first observed cells, in 1665?", ["*Robert Hooke", "Robert Brown", "Antonie van Leeuwenhoek", "Charles Darwin"]),
+                        (
+                            "Which organelle is known as the powerhouse of the cell?",
+                            ["*Mitochondria", "Nucleus", "Ribosome", "Golgi apparatus"],
+                        ),
+                        (
+                            "Who first observed cells, in 1665?",
+                            [
+                                "*Robert Hooke",
+                                "Robert Brown",
+                                "Antonie van Leeuwenhoek",
+                                "Charles Darwin",
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -1098,21 +1907,65 @@ CURRICULUM = {
                 (
                     "The French Revolution",
                     "Causes, events and legacy of the French Revolution of 1789.",
-                    ("Liberty, Equality, Fraternity", "<p>The French Revolution began on <b>14 July 1789</b> with the storming of the Bastille. French society was divided into three estates, and the Third Estate paid most of the taxes.</p><p>The revolution spread the ideas of <b>liberty, equality and fraternity</b> and produced the Declaration of the Rights of Man and Citizen.</p>"),
-                    ("The French Revolution Class 9", "https://www.youtube.com/watch?v=PJaUqX9KQW0"),
+                    (
+                        "Liberty, Equality, Fraternity",
+                        "<p>The French Revolution began on <b>14 July 1789</b> with the storming of the Bastille. French society was divided into three estates, and the Third Estate paid most of the taxes.</p><p>The revolution spread the ideas of <b>liberty, equality and fraternity</b> and produced the Declaration of the Rights of Man and Citizen.</p>",
+                    ),
+                    (
+                        "The French Revolution Class 9",
+                        "https://www.youtube.com/watch?v=PJaUqX9KQW0",
+                    ),
                     [
-                        ("The storming of the Bastille took place on?", ["*14 July 1789", "4 July 1776", "26 January 1950", "14 July 1889"]),
-                        ("Which estate in France paid most of the taxes?", ["*Third Estate", "First Estate (clergy)", "Second Estate (nobility)", "None of them"]),
+                        (
+                            "The storming of the Bastille took place on?",
+                            [
+                                "*14 July 1789",
+                                "4 July 1776",
+                                "26 January 1950",
+                                "14 July 1889",
+                            ],
+                        ),
+                        (
+                            "Which estate in France paid most of the taxes?",
+                            [
+                                "*Third Estate",
+                                "First Estate (clergy)",
+                                "Second Estate (nobility)",
+                                "None of them",
+                            ],
+                        ),
                     ],
                 ),
                 (
                     "Physical Features of India",
                     "The Himalayas, the Northern Plains, the Peninsular Plateau, the desert, the coastal plains and the islands.",
-                    ("Major Physiographic Divisions", "<p>India's major physiographic divisions are the <b>Himalayan mountains</b>, the <b>Northern Plains</b>, the <b>Peninsular Plateau</b>, the Indian Desert, the Coastal Plains and the Islands.</p><p>The Northern Plains are formed by the Indus, Ganga and Brahmaputra river systems and are very fertile. The Peninsular Plateau is the oldest landmass.</p>"),
-                    ("Physical Features of India Class 9", "https://www.youtube.com/watch?v=cv_DwtW0c-Q"),
+                    (
+                        "Major Physiographic Divisions",
+                        "<p>India's major physiographic divisions are the <b>Himalayan mountains</b>, the <b>Northern Plains</b>, the <b>Peninsular Plateau</b>, the Indian Desert, the Coastal Plains and the Islands.</p><p>The Northern Plains are formed by the Indus, Ganga and Brahmaputra river systems and are very fertile. The Peninsular Plateau is the oldest landmass.</p>",
+                    ),
+                    (
+                        "Physical Features of India Class 9",
+                        "https://www.youtube.com/watch?v=cv_DwtW0c-Q",
+                    ),
                     [
-                        ("Which is the oldest landmass among India's physical divisions?", ["*Peninsular Plateau", "Himalayas", "Northern Plains", "Coastal Plains"]),
-                        ("The Lakshadweep islands are located in the?", ["*Arabian Sea", "Bay of Bengal", "Andaman Sea", "Gulf of Mannar"]),
+                        (
+                            "Which is the oldest landmass among India's physical divisions?",
+                            [
+                                "*Peninsular Plateau",
+                                "Himalayas",
+                                "Northern Plains",
+                                "Coastal Plains",
+                            ],
+                        ),
+                        (
+                            "The Lakshadweep islands are located in the?",
+                            [
+                                "*Arabian Sea",
+                                "Bay of Bengal",
+                                "Andaman Sea",
+                                "Gulf of Mannar",
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -1126,21 +1979,45 @@ CURRICULUM = {
                 (
                     "Digital Documentation",
                     "Creating, formatting and saving documents in a word processor (LibreOffice Writer).",
-                    ("Working with a Word Processor", "<p>A word processor such as <b>LibreOffice Writer</b> is used to create letters, reports and notices. You can format text (bold, italic, font size), insert tables and images, and apply styles.</p><p>Writer saves files in the OpenDocument Text format with the extension <b>.odt</b>.</p>"),
-                    ("LibreOffice Writer Tutorial for Beginners", "https://www.youtube.com/watch?v=YvXNivbKiS4"),
+                    (
+                        "Working with a Word Processor",
+                        "<p>A word processor such as <b>LibreOffice Writer</b> is used to create letters, reports and notices. You can format text (bold, italic, font size), insert tables and images, and apply styles.</p><p>Writer saves files in the OpenDocument Text format with the extension <b>.odt</b>.</p>",
+                    ),
+                    (
+                        "LibreOffice Writer Tutorial for Beginners",
+                        "https://www.youtube.com/watch?v=YvXNivbKiS4",
+                    ),
                     [
-                        ("The default file extension of LibreOffice Writer documents is?", ["*.odt", ".ods", ".odp", ".txt"]),
-                        ("Which keyboard shortcut makes the selected text bold?", ["*Ctrl + B", "Ctrl + I", "Ctrl + U", "Ctrl + P"]),
+                        (
+                            "The default file extension of LibreOffice Writer documents is?",
+                            ["*.odt", ".ods", ".odp", ".txt"],
+                        ),
+                        (
+                            "Which keyboard shortcut makes the selected text bold?",
+                            ["*Ctrl + B", "Ctrl + I", "Ctrl + U", "Ctrl + P"],
+                        ),
                     ],
                 ),
                 (
                     "Electronic Spreadsheets",
                     "Cells, formulas and functions in LibreOffice Calc.",
-                    ("Spreadsheet Basics", "<p>A <b>spreadsheet</b> is a grid of rows and columns. The intersection of a row and a column is a <b>cell</b>, named by its address such as B3.</p><p>Formulas start with <b>=</b>; for example <code>=SUM(B2:B10)</code> adds a range of cells and <code>=AVERAGE(C2:C6)</code> finds their mean.</p>"),
-                    ("LibreOffice Calc Basics", "https://www.youtube.com/watch?v=_q3K1rYQCiw"),
+                    (
+                        "Spreadsheet Basics",
+                        "<p>A <b>spreadsheet</b> is a grid of rows and columns. The intersection of a row and a column is a <b>cell</b>, named by its address such as B3.</p><p>Formulas start with <b>=</b>; for example <code>=SUM(B2:B10)</code> adds a range of cells and <code>=AVERAGE(C2:C6)</code> finds their mean.</p>",
+                    ),
+                    (
+                        "LibreOffice Calc Basics",
+                        "https://www.youtube.com/watch?v=_q3K1rYQCiw",
+                    ),
                     [
-                        ("In a spreadsheet, a formula always begins with?", ["*=", "+", "#", "@"]),
-                        ("Which function adds the values in a range of cells?", ["*SUM", "COUNT", "MAX", "AVERAGE"]),
+                        (
+                            "In a spreadsheet, a formula always begins with?",
+                            ["*=", "+", "#", "@"],
+                        ),
+                        (
+                            "Which function adds the values in a range of cells?",
+                            ["*SUM", "COUNT", "MAX", "AVERAGE"],
+                        ),
                     ],
                 ),
             ],
@@ -1177,27 +2054,47 @@ def migrate_to_per_class_courses():
     in_legacy = ["in", legacy]
 
     # Learning content owned by the legacy courses (collected before they go)
-    topics = sorted(set(frappe.get_all(
-        "Course Topic", filters={"parenttype": "Course", "parent": in_legacy}, pluck="topic"
-    )))
+    topics = sorted(
+        set(
+            frappe.get_all(
+                "Course Topic",
+                filters={"parenttype": "Course", "parent": in_legacy},
+                pluck="topic",
+            )
+        )
+    )
     contents = frappe.get_all(
         "Topic Content",
         filters={"parenttype": "Topic", "parent": ["in", topics or ["-"]]},
         fields=["content_type", "content"],
     )
     quizzes = sorted({c.content for c in contents if c.content_type == "Quiz"})
-    questions = sorted(set(frappe.get_all(
-        "Quiz Question", filters={"parent": ["in", quizzes or ["-"]]}, pluck="question_link"
-    )))
+    questions = sorted(
+        set(
+            frappe.get_all(
+                "Quiz Question",
+                filters={"parent": ["in", quizzes or ["-"]]},
+                pluck="question_link",
+            )
+        )
+    )
 
     # 1. Learning activity and course enrollments of the legacy courses
-    enrollments = frappe.get_all("Course Enrollment", filters={"course": in_legacy}, pluck="name")
+    enrollments = frappe.get_all(
+        "Course Enrollment", filters={"course": in_legacy}, pluck="name"
+    )
     for dt in ("Quiz Activity", "Course Activity"):
         names = set(frappe.get_all(dt, filters={"course": in_legacy}, pluck="name"))
         if enrollments:
-            names |= set(frappe.get_all(dt, filters={"enrollment": ["in", enrollments]}, pluck="name"))
+            names |= set(
+                frappe.get_all(
+                    dt, filters={"enrollment": ["in", enrollments]}, pluck="name"
+                )
+            )
         if dt == "Quiz Activity" and quizzes:
-            names |= set(frappe.get_all(dt, filters={"quiz": ["in", quizzes]}, pluck="name"))
+            names |= set(
+                frappe.get_all(dt, filters={"quiz": ["in", quizzes]}, pluck="name")
+            )
         for n in sorted(names):
             frappe.delete_doc(dt, n, ignore_permissions=True)
     for n in enrollments:
@@ -1208,35 +2105,58 @@ def migrate_to_per_class_courses():
     frappe.db.delete("Program Enrollment Course", {"course": in_legacy})
 
     # 3. Assessment results and plans (submitted: cancel, then delete)
-    plans = frappe.get_all("Assessment Plan", filters={"course": in_legacy}, pluck="name")
-    results = set(frappe.get_all("Assessment Result", filters={"course": in_legacy}, pluck="name"))
+    plans = frappe.get_all(
+        "Assessment Plan", filters={"course": in_legacy}, pluck="name"
+    )
+    results = set(
+        frappe.get_all("Assessment Result", filters={"course": in_legacy}, pluck="name")
+    )
     if plans:
-        results |= set(frappe.get_all(
-            "Assessment Result", filters={"assessment_plan": ["in", plans]}, pluck="name"
-        ))
+        results |= set(
+            frappe.get_all(
+                "Assessment Result",
+                filters={"assessment_plan": ["in", plans]},
+                pluck="name",
+            )
+        )
     _cancel_and_delete("Assessment Result", sorted(results))
     _cancel_and_delete("Assessment Plan", plans)
 
     # 4. Course schedules and course-based student groups of the legacy courses
     legacy_groups = frappe.get_all(
-        "Student Group", filters={"group_based_on": "Course", "course": in_legacy}, pluck="name"
+        "Student Group",
+        filters={"group_based_on": "Course", "course": in_legacy},
+        pluck="name",
     )
-    schedules = set(frappe.get_all("Course Schedule", filters={"course": in_legacy}, pluck="name"))
+    schedules = set(
+        frappe.get_all("Course Schedule", filters={"course": in_legacy}, pluck="name")
+    )
     if legacy_groups:
-        schedules |= set(frappe.get_all(
-            "Course Schedule", filters={"student_group": ["in", legacy_groups]}, pluck="name"
-        ))
+        schedules |= set(
+            frappe.get_all(
+                "Course Schedule",
+                filters={"student_group": ["in", legacy_groups]},
+                pluck="name",
+            )
+        )
     if schedules:
         # schedule-based attendance / leave would point at deleted schedules
-        _cancel_and_delete("Student Attendance", frappe.get_all(
-            "Student Attendance", filters={"course_schedule": ["in", list(schedules)]}, pluck="name"
-        ))
+        _cancel_and_delete(
+            "Student Attendance",
+            frappe.get_all(
+                "Student Attendance",
+                filters={"course_schedule": ["in", list(schedules)]},
+                pluck="name",
+            ),
+        )
         for la in frappe.get_all(
             "Student Leave Application",
             filters={"course_schedule": ["in", list(schedules)]},
             fields=["name", "student"],
         ):
-            frappe.db.set_value("Student Leave Application", la.name, "course_schedule", None)
+            frappe.db.set_value(
+                "Student Leave Application", la.name, "course_schedule", None
+            )
     for n in sorted(schedules):
         frappe.delete_doc("Course Schedule", n, ignore_permissions=True)
     for g in legacy_groups:
@@ -1257,16 +2177,21 @@ def migrate_to_per_class_courses():
 
     # Timetable generation snapshots that show the legacy courses
     for r in frappe.get_all(
-        "Timetable Generation Result", fields=["name", "timetable_snapshot", "unscheduled_subjects"]
+        "Timetable Generation Result",
+        fields=["name", "timetable_snapshot", "unscheduled_subjects"],
     ):
         try:
-            entries = (frappe.parse_json(r.timetable_snapshot or "{}") or {}).get("entries") or []
+            entries = (frappe.parse_json(r.timetable_snapshot or "{}") or {}).get(
+                "entries"
+            ) or []
         except Exception:
             entries = []
         if any(e.get("course") in legacy for e in entries) or any(
             c in (r.unscheduled_subjects or "") for c in legacy
         ):
-            frappe.delete_doc("Timetable Generation Result", r.name, ignore_permissions=True)
+            frappe.delete_doc(
+                "Timetable Generation Result", r.name, ignore_permissions=True
+            )
 
     # 6. The legacy courses and the learning content only they used
     for c in legacy:
@@ -1280,7 +2205,9 @@ def migrate_to_per_class_courses():
         ):
             frappe.delete_doc(c.content_type, c.content, ignore_permissions=True)
     for q in questions:
-        if frappe.db.exists("Question", q) and not frappe.db.exists("Quiz Question", {"question_link": q}):
+        if frappe.db.exists("Question", q) and not frappe.db.exists(
+            "Quiz Question", {"question_link": q}
+        ):
             frappe.delete_doc("Question", q, ignore_permissions=True)
     log(
         f"       removed {len(legacy)} courses, {len(topics)} topics, {len(contents)} contents, "
@@ -1293,7 +2220,7 @@ def _quiz_options(question, options):
     """Options marked with a leading "*" are correct; rotate deterministically so
     the correct answer is not always the first option."""
     rows = [(o.lstrip("*"), 1 if o.startswith("*") else 0) for o in options]
-    k = sum(map(ord, question)) % len(rows)
+    k = sum(ord(ch) for ch in question) % len(rows)
     return rows[k:] + rows[:k]
 
 
@@ -1310,7 +2237,8 @@ def _ensure_quiz(title, questions):
                         "doctype": "Question",
                         "question": q_text,
                         "options": [
-                            {"option": o, "is_correct": c} for o, c in _quiz_options(q_text, options)
+                            {"option": o, "is_correct": c}
+                            for o, c in _quiz_options(q_text, options)
                         ],
                     }
                 )
@@ -1338,9 +2266,13 @@ def seed_curriculum():
     for t_idx, (program, spec, course) in enumerate(iter_courses()):
         teacher = instructor_for_course(course)
         topic_rows = []
-        for i, (topic_name, topic_desc, (art_title, art_body), (vid_title, vid_url), questions) in enumerate(
-            spec["topics"]
-        ):
+        for i, (
+            topic_name,
+            topic_desc,
+            (art_title, art_body),
+            (vid_title, vid_url),
+            questions,
+        ) in enumerate(spec["topics"]):
             article = get_or_insert(
                 "Article",
                 {"title": art_title},
@@ -1387,7 +2319,8 @@ def seed_curriculum():
                 "default_grading_scale": "CBSE Grading",
                 "topics": topic_rows,
                 "assessment_criteria": [
-                    {"assessment_criteria": crit, "weightage": w} for crit, w in spec["criteria"]
+                    {"assessment_criteria": crit, "weightage": w}
+                    for crit, w in spec["criteria"]
                 ],
             },
         )
@@ -1422,7 +2355,9 @@ def seed_programs():
 def seed_instructors():
     CTX.instructors = []
     for idx, (first, last, email, gender, course) in enumerate(INSTRUCTORS):
-        ensure_user(email, first, last, ["Instructor", "Academics User", "Employee"], gender)
+        ensure_user(
+            email, first, last, ["Instructor", "Academics User", "Employee"], gender
+        )
         emp = frappe.db.get_value("Employee", {"user_id": email}, "name")
         if not emp:
             e = frappe.get_doc(
@@ -1494,7 +2429,9 @@ def seed_students():
         else:
             frappe.db.set_value("Student", student_id(email), "user", email)
 
-    for i, (first, last, email, gender, ward, relation, occupation) in enumerate(GUARDIANS):
+    for i, (first, last, email, gender, ward, relation, occupation) in enumerate(
+        GUARDIANS
+    ):
         ensure_user(email, first, last, ["Guardian"], gender, user_type="Website User")
         gname = frappe.db.get_value("Guardian", {"email_address": email}, "name")
         if not gname:
@@ -1525,7 +2462,11 @@ def seed_students():
         if not any(g.guardian == gname for g in stu.guardians):
             stu.append(
                 "guardians",
-                {"guardian": gname, "guardian_name": f"{first} {last}", "relation": relation},
+                {
+                    "guardian": gname,
+                    "guardian_name": f"{first} {last}",
+                    "relation": relation,
+                },
             )
             stu.save(ignore_permissions=True)
 
@@ -1534,12 +2475,24 @@ def seed_students():
 def seed_enrollments():
     plan = [(e, p) for (_f, _l, e, _g, _d, p, _b, _c) in STUDENTS]
     plan.append(("rahul.sharma@example.com", "Standard 6"))  # second program for Rahul
-    houses = ["Red House", "Blue House", "Green House", "Yellow House", "Red House", "Blue House"]
+    houses = [
+        "Red House",
+        "Blue House",
+        "Green House",
+        "Yellow House",
+        "Red House",
+        "Blue House",
+    ]
     for i, (email, program) in enumerate(plan):
         stu = student_id(email)
         name = frappe.db.get_value(
             "Program Enrollment",
-            {"student": stu, "program": program, "academic_year": AY, "docstatus": ["<", 2]},
+            {
+                "student": stu,
+                "program": program,
+                "academic_year": AY,
+                "docstatus": ["<", 2],
+            },
             "name",
         )
         if not name:
@@ -1580,7 +2533,11 @@ def sync_enrollment_courses(pe):
     if have != wanted:
         frappe.db.delete(
             "Program Enrollment Course",
-            {"parent": pe.name, "parenttype": "Program Enrollment", "course": ["not in", wanted]},
+            {
+                "parent": pe.name,
+                "parenttype": "Program Enrollment",
+                "course": ["not in", wanted],
+            },
         )
         pe.reload()
         have = [r.course for r in pe.courses]
@@ -1592,7 +2549,10 @@ def sync_enrollment_courses(pe):
         order = {c: i for i, c in enumerate(wanted)}
         for row in pe.courses:
             frappe.db.set_value(
-                "Program Enrollment Course", row.name, "idx", order.get(row.course, 0) + 1,
+                "Program Enrollment Course",
+                row.name,
+                "idx",
+                order.get(row.course, 0) + 1,
                 update_modified=False,
             )
         pe.reload()
@@ -1602,18 +2562,26 @@ def sync_enrollment_courses(pe):
         filters={"program_enrollment": pe.name, "course": ["not in", wanted]},
         pluck="name",
     ):
-        if not frappe.db.exists("Course Activity", {"enrollment": ce}) and not frappe.db.exists(
-            "Quiz Activity", {"enrollment": ce}
-        ):
+        if not frappe.db.exists(
+            "Course Activity", {"enrollment": ce}
+        ) and not frappe.db.exists("Quiz Activity", {"enrollment": ce}):
             frappe.delete_doc("Course Enrollment", ce, ignore_permissions=True)
 
 
 # Course-based groups (remedial / lab sessions): name, course, program, students
 COURSE_GROUPS = [
-    ("Standard 5 - Mathematics", "Mathematics - Std 5", "Standard 5",
-     ["rahul.sharma@example.com", "priya.patel@example.com"]),
-    ("Standard 5 - EVS", "EVS - Std 5", "Standard 5",
-     ["rahul.sharma@example.com", "priya.patel@example.com"]),
+    (
+        "Standard 5 - Mathematics",
+        "Mathematics - Std 5",
+        "Standard 5",
+        ["rahul.sharma@example.com", "priya.patel@example.com"],
+    ),
+    (
+        "Standard 5 - EVS",
+        "EVS - Std 5",
+        "Standard 5",
+        ["rahul.sharma@example.com", "priya.patel@example.com"],
+    ),
 ]
 
 
@@ -1634,7 +2602,7 @@ def _group_students(emails):
 @section("Student groups")
 def seed_groups():
     by_program = {}
-    for (_f, _l, email, _g, _d, program, _b, _c) in STUDENTS:
+    for _f, _l, email, _g, _d, program, _b, _c in STUDENTS:
         by_program.setdefault(program, []).append(email)
     all_instructors = [{"instructor": f"{f} {l}"} for (f, l, *_r) in INSTRUCTORS]
     for i, program in enumerate(PROGRAMS):
@@ -1691,7 +2659,11 @@ def seed_groups():
                 "academic_term": CTX.t2,
                 "max_strength": 20,
                 "students": _group_students(
-                    ["rahul.sharma@example.com", "aarav.mehta@example.com", "kavya.joshi@example.com"]
+                    [
+                        "rahul.sharma@example.com",
+                        "aarav.mehta@example.com",
+                        "kavya.joshi@example.com",
+                    ]
                 ),
                 "instructors": [{"instructor": "Arjun Nair"}],
             }
@@ -1775,7 +2747,10 @@ def build_week_plan():
     repeating a subject on the same day, keep the busiest teachers busy).
     Periods that cannot be filled stay free.
     """
-    remaining = {p: {course_title(s["subject"], p): s["periods"] for s in CURRICULUM[p]} for p in PROGRAMS}
+    remaining = {
+        p: {course_title(s["subject"], p): s["periods"] for s in CURRICULUM[p]}
+        for p in PROGRAMS
+    }
     teacher = {c: instructor_for_course(c) for p in PROGRAMS for c in remaining[p]}
     n_days, n_periods = 5, len(PERIODS)
     plan = {}
@@ -1789,7 +2764,18 @@ def build_week_plan():
                     load[teacher[c]] = load.get(teacher[c], 0) + n
             best = [None, None]
 
-            def search(i, used, choice, score):
+            # loop values are bound as defaults: search() runs within this iteration only
+            def search(
+                i,
+                used,
+                choice,
+                score,
+                best=best,
+                slots_left=slots_left,
+                d=d,
+                load=load,
+                taught_today=taught_today,
+            ):
                 if i == len(PROGRAMS):
                     if best[0] is None or score > best[0]:
                         best[0], best[1] = score, list(choice)
@@ -1839,10 +2825,19 @@ def seed_schedules():
                     program,
                 )
         # Course-based remedial / lab sessions after regular periods
-        gname, course, program, _students = COURSE_GROUPS[0 if date.weekday() in (0, 2, 4) else 1]
-        _schedule(gname, course, instructor_for_course(course),
-                  CTX.rooms[0] if date.weekday() in (0, 2, 4) else CTX.rooms[4],
-                  date, "13:00:00", "13:45:00", program)
+        gname, course, program, _students = COURSE_GROUPS[
+            0 if date.weekday() in (0, 2, 4) else 1
+        ]
+        _schedule(
+            gname,
+            course,
+            instructor_for_course(course),
+            CTX.rooms[0] if date.weekday() in (0, 2, 4) else CTX.rooms[4],
+            date,
+            "13:00:00",
+            "13:45:00",
+            program,
+        )
 
 
 @section("Student attendance (past two weeks)")
@@ -1860,7 +2855,12 @@ def seed_attendance():
                 continue
             if frappe.db.exists(
                 "Student Attendance",
-                {"student": stu, "student_group": group, "date": date, "docstatus": ["!=", 2]},
+                {
+                    "student": stu,
+                    "student_group": group,
+                    "date": date,
+                    "docstatus": ["!=", 2],
+                },
             ):
                 continue
             status = "Absent" if d_idx in absent_pattern.get(s_idx, []) else "Present"
@@ -1882,11 +2882,46 @@ def seed_attendance():
 def seed_leaves():
     leaves = [
         # email, from, to, reason, action, mark_as_present
-        ("priya.patel@example.com", "2026-11-12", "2026-11-13", "Fever and cold, doctor advised rest.", "submit", 0),
-        ("ananya.shah@example.com", "2026-11-17", "2026-11-17", "Representing school at inter-school quiz competition.", "submit", 1),
-        ("aarav.mehta@example.com", "2026-11-26", "2026-11-27", "Attending cousin's wedding in Udaipur.", "draft", 0),
-        ("kavya.joshi@example.com", "2026-12-01", "2026-12-02", "Dental surgery appointment.", "submit", 0),
-        ("rahul.sharma@example.com", "2026-12-03", "2026-12-04", "Family trip (plan cancelled).", "cancel", 0),
+        (
+            "priya.patel@example.com",
+            "2026-11-12",
+            "2026-11-13",
+            "Fever and cold, doctor advised rest.",
+            "submit",
+            0,
+        ),
+        (
+            "ananya.shah@example.com",
+            "2026-11-17",
+            "2026-11-17",
+            "Representing school at inter-school quiz competition.",
+            "submit",
+            1,
+        ),
+        (
+            "aarav.mehta@example.com",
+            "2026-11-26",
+            "2026-11-27",
+            "Attending cousin's wedding in Udaipur.",
+            "draft",
+            0,
+        ),
+        (
+            "kavya.joshi@example.com",
+            "2026-12-01",
+            "2026-12-02",
+            "Dental surgery appointment.",
+            "submit",
+            0,
+        ),
+        (
+            "rahul.sharma@example.com",
+            "2026-12-03",
+            "2026-12-04",
+            "Family trip (plan cancelled).",
+            "cancel",
+            0,
+        ),
     ]
     program_of = {s[2]: s[5] for s in STUDENTS}
     for email, fd, td, reason, action, mark_present in leaves:
@@ -1917,13 +2952,76 @@ def seed_leaves():
 
 ASSESSMENTS = [
     # assessment_name, program, course, group, date, from, to, room idx
-    ("Unit Test 1 - Mathematics (Std 5)", "Standard 5", "Mathematics - Std 5", "Unit Test 1", "2026-11-10", "09:00:00", "10:00:00", 0),
-    ("Unit Test 1 - EVS (Std 5)", "Standard 5", "EVS - Std 5", "Unit Test 1", "2026-11-11", "09:00:00", "10:00:00", 0),
-    ("Unit Test 1 - English (Std 5)", "Standard 5", "English - Std 5", "Unit Test 1", "2026-11-12", "09:00:00", "10:00:00", 0),
-    ("Unit Test 1 - Mathematics (Std 6)", "Standard 6", "Mathematics - Std 6", "Unit Test 1", "2026-11-10", "10:30:00", "11:30:00", 1),
-    ("Unit Test 1 - Hindi (Std 7)", "Standard 7", "Hindi - Std 7", "Unit Test 1", "2026-11-13", "09:00:00", "10:00:00", 2),
-    ("Unit Test 1 - Social Science (Std 8)", "Standard 8", "Social Science - Std 8", "Unit Test 1", "2026-11-13", "10:30:00", "11:30:00", 3),
-    ("Half Yearly - Mathematics (Std 5)", "Standard 5", "Mathematics - Std 5", "Half Yearly Exam", "2026-12-07", "09:00:00", "11:00:00", 0),
+    (
+        "Unit Test 1 - Mathematics (Std 5)",
+        "Standard 5",
+        "Mathematics - Std 5",
+        "Unit Test 1",
+        "2026-11-10",
+        "09:00:00",
+        "10:00:00",
+        0,
+    ),
+    (
+        "Unit Test 1 - EVS (Std 5)",
+        "Standard 5",
+        "EVS - Std 5",
+        "Unit Test 1",
+        "2026-11-11",
+        "09:00:00",
+        "10:00:00",
+        0,
+    ),
+    (
+        "Unit Test 1 - English (Std 5)",
+        "Standard 5",
+        "English - Std 5",
+        "Unit Test 1",
+        "2026-11-12",
+        "09:00:00",
+        "10:00:00",
+        0,
+    ),
+    (
+        "Unit Test 1 - Mathematics (Std 6)",
+        "Standard 6",
+        "Mathematics - Std 6",
+        "Unit Test 1",
+        "2026-11-10",
+        "10:30:00",
+        "11:30:00",
+        1,
+    ),
+    (
+        "Unit Test 1 - Hindi (Std 7)",
+        "Standard 7",
+        "Hindi - Std 7",
+        "Unit Test 1",
+        "2026-11-13",
+        "09:00:00",
+        "10:00:00",
+        2,
+    ),
+    (
+        "Unit Test 1 - Social Science (Std 8)",
+        "Standard 8",
+        "Social Science - Std 8",
+        "Unit Test 1",
+        "2026-11-13",
+        "10:30:00",
+        "11:30:00",
+        3,
+    ),
+    (
+        "Half Yearly - Mathematics (Std 5)",
+        "Standard 5",
+        "Mathematics - Std 5",
+        "Half Yearly Exam",
+        "2026-12-07",
+        "09:00:00",
+        "11:00:00",
+        0,
+    ),
 ]
 
 SCORES = {
@@ -1943,7 +3041,9 @@ def seed_assessments():
         instructor = instructor_for_course(course)
         is_final = agroup == "Half Yearly Exam"
         theory, oral = (80, 20) if is_final else (40, 10)
-        plan = frappe.db.get_value("Assessment Plan", {"assessment_name": name, "docstatus": ["<", 2]}, "name")
+        plan = frappe.db.get_value(
+            "Assessment Plan", {"assessment_name": name, "docstatus": ["<", 2]}, "name"
+        )
         if not plan:
             ap = frappe.get_doc(
                 {
@@ -2004,7 +3104,9 @@ def seed_assessments():
                     "assessment_group": agroup,
                     "grading_scale": "CBSE Grading",
                     "maximum_score": theory + oral,
-                    "comment": "Good effort." if t + o >= 35 else "Needs more practice.",
+                    "comment": (
+                        "Good effort." if t + o >= 35 else "Needs more practice."
+                    ),
                     "details": [
                         {"assessment_criteria": "Theory", "score": t},
                         {"assessment_criteria": "Oral", "score": o},
@@ -2059,12 +3161,23 @@ def seed_fees():
                 }
             ).insert(ignore_permissions=True)
 
-    multiplier = {"Standard 5": 1.0, "Standard 6": 1.05, "Standard 7": 1.1, "Standard 8": 1.15, "Standard 9": 1.2}
+    multiplier = {
+        "Standard 5": 1.0,
+        "Standard 6": 1.05,
+        "Standard 7": 1.1,
+        "Standard 8": 1.15,
+        "Standard 9": 1.2,
+    }
     CTX.fee_structures = {}
     for program in PROGRAMS:
         fs = frappe.db.get_value(
             "Fee Structure",
-            {"program": program, "academic_year": AY, "academic_term": CTX.t2, "docstatus": ["<", 2]},
+            {
+                "program": program,
+                "academic_year": AY,
+                "academic_term": CTX.t2,
+                "docstatus": ["<", 2],
+            },
             "name",
         )
         if not fs:
@@ -2100,7 +3213,9 @@ def seed_fees():
         CTX.fee_structures[program] = fs
 
     # Fee schedules for the programs that have students
-    from education.education.doctype.fee_schedule.fee_schedule import create_sales_invoice
+    from education.education.doctype.fee_schedule.fee_schedule import (
+        create_sales_invoice,
+    )
 
     due_dates = {
         "Standard 5": ("2026-10-05", "2026-10-31"),
@@ -2178,7 +3293,11 @@ def seed_fees():
             continue
         if frappe.db.exists(
             "Payment Entry Reference",
-            {"reference_doctype": "Sales Invoice", "reference_name": si, "docstatus": 1},
+            {
+                "reference_doctype": "Sales Invoice",
+                "reference_name": si,
+                "docstatus": 1,
+            },
         ):
             continue
         pe = get_payment_entry("Sales Invoice", si, party_amount=amount)
@@ -2196,11 +3315,56 @@ def seed_fees():
 
 
 APPLICANTS = [
-    ("Ishaan", "Verma", "ishaan.verma@example.com", "Male", "2016-02-11", "Standard 5", "Applied", 0),
-    ("Diya", "Reddy", "diya.reddy@example.com", "Female", "2015-06-03", "Standard 6", "Approved", 1),
-    ("Vihaan", "Gupta", "vihaan.gupta@example.com", "Male", "2014-09-27", "Standard 7", "Rejected", 1),
-    ("Saanvi", "Iyer", "saanvi.iyer@example.com", "Female", "2012-12-15", "Standard 9", "Admitted", 1),
-    ("Reyansh", "Kumar", "reyansh.kumar@example.com", "Male", "2013-04-08", "Standard 8", "Applied", 1),
+    (
+        "Ishaan",
+        "Verma",
+        "ishaan.verma@example.com",
+        "Male",
+        "2016-02-11",
+        "Standard 5",
+        "Applied",
+        0,
+    ),
+    (
+        "Diya",
+        "Reddy",
+        "diya.reddy@example.com",
+        "Female",
+        "2015-06-03",
+        "Standard 6",
+        "Approved",
+        1,
+    ),
+    (
+        "Vihaan",
+        "Gupta",
+        "vihaan.gupta@example.com",
+        "Male",
+        "2014-09-27",
+        "Standard 7",
+        "Rejected",
+        1,
+    ),
+    (
+        "Saanvi",
+        "Iyer",
+        "saanvi.iyer@example.com",
+        "Female",
+        "2012-12-15",
+        "Standard 9",
+        "Admitted",
+        1,
+    ),
+    (
+        "Reyansh",
+        "Kumar",
+        "reyansh.kumar@example.com",
+        "Male",
+        "2013-04-08",
+        "Standard 8",
+        "Applied",
+        1,
+    ),
 ]
 
 
@@ -2219,13 +3383,19 @@ def seed_applicants():
                 "enable_admission_application": 1,
                 "introduction": "<p>Applications are open for Standards 5 to 9 for the Term 2 intake.</p>",
                 "program_details": [
-                    {"program": p, "application_fee": 500, "description": f"Admission to {p}"}
+                    {
+                        "program": p,
+                        "application_fee": 500,
+                        "description": f"Admission to {p}",
+                    }
                     for p in PROGRAMS
                 ],
             }
         ).insert(ignore_permissions=True)
 
-    for i, (first, last, email, gender, dob, program, status, paid) in enumerate(APPLICANTS):
+    for i, (first, last, email, gender, dob, program, status, paid) in enumerate(
+        APPLICANTS
+    ):
         if frappe.db.exists("Student Applicant", {"student_email_id": email}):
             continue
         frappe.get_doc(
@@ -2256,15 +3426,60 @@ def seed_applicants():
 
 
 STUDENT_LOGS = [
-    ("rahul.sharma@example.com", "Achievement", "2026-11-14", "<p>Won <b>1st prize</b> in the inter-school Mathematics Olympiad (junior category).</p>"),
-    ("priya.patel@example.com", "Achievement", "2026-11-05", "<p>Selected for the district-level <b>science exhibition</b> with her solar cooker model.</p>"),
-    ("aarav.mehta@example.com", "Achievement", "2026-10-22", "<p>Gold medal in the 100 m sprint at the annual sports day.</p>"),
-    ("ananya.shah@example.com", "Achievement", "2026-11-17", "<p>Runner-up in the inter-school quiz competition.</p>"),
-    ("kavya.joshi@example.com", "Achievement", "2026-10-30", "<p>Awarded <b>Best Speaker</b> in the English elocution competition.</p>"),
-    ("rahul.sharma@example.com", "Academic", "2026-11-18", "<p>Needs to improve handwriting and neatness in Hindi notebook.</p>"),
-    ("kavya.joshi@example.com", "Academic", "2026-11-19", "<p>Scored below expectations in Social Studies unit test; remedial classes recommended.</p>"),
-    ("priya.patel@example.com", "Medical", "2026-11-12", "<p>Absent due to viral fever; medical certificate submitted.</p>"),
-    ("aarav.mehta@example.com", "General", "2026-11-20", "<p>Elected class monitor for Standard 6 Section A.</p>"),
+    (
+        "rahul.sharma@example.com",
+        "Achievement",
+        "2026-11-14",
+        "<p>Won <b>1st prize</b> in the inter-school Mathematics Olympiad (junior category).</p>",
+    ),
+    (
+        "priya.patel@example.com",
+        "Achievement",
+        "2026-11-05",
+        "<p>Selected for the district-level <b>science exhibition</b> with her solar cooker model.</p>",
+    ),
+    (
+        "aarav.mehta@example.com",
+        "Achievement",
+        "2026-10-22",
+        "<p>Gold medal in the 100 m sprint at the annual sports day.</p>",
+    ),
+    (
+        "ananya.shah@example.com",
+        "Achievement",
+        "2026-11-17",
+        "<p>Runner-up in the inter-school quiz competition.</p>",
+    ),
+    (
+        "kavya.joshi@example.com",
+        "Achievement",
+        "2026-10-30",
+        "<p>Awarded <b>Best Speaker</b> in the English elocution competition.</p>",
+    ),
+    (
+        "rahul.sharma@example.com",
+        "Academic",
+        "2026-11-18",
+        "<p>Needs to improve handwriting and neatness in Hindi notebook.</p>",
+    ),
+    (
+        "kavya.joshi@example.com",
+        "Academic",
+        "2026-11-19",
+        "<p>Scored below expectations in Social Studies unit test; remedial classes recommended.</p>",
+    ),
+    (
+        "priya.patel@example.com",
+        "Medical",
+        "2026-11-12",
+        "<p>Absent due to viral fever; medical certificate submitted.</p>",
+    ),
+    (
+        "aarav.mehta@example.com",
+        "General",
+        "2026-11-20",
+        "<p>Elected class monitor for Standard 6 Section A.</p>",
+    ),
 ]
 
 
@@ -2297,35 +3512,35 @@ PUBLIC_NOTICES = [
     (
         "Winter Break: 25 December to 1 January",
         "<p>The school will remain closed for winter break from 25 December 2026 to "
-        "1 January 2027. Classes resume on Monday, 4 January 2027.</p>",
+        + "1 January 2027. Classes resume on Monday, 4 January 2027.</p>",
         1,
         "2027-01-05",
     ),
     (
         "Parent-Teacher Meeting on 5 December",
         "<p>The Term 2 parent-teacher meeting for Standards 5 to 9 will be held on "
-        "Saturday, 5 December 2026 from 9:00 AM to 12:30 PM in the respective classrooms.</p>",
+        + "Saturday, 5 December 2026 from 9:00 AM to 12:30 PM in the respective classrooms.</p>",
         0,
         "2026-12-06",
     ),
     (
         "Annual Sports Day - 18 December",
         "<p>Annual Sports Day will be held on the school ground on 18 December 2026. "
-        "Parents are welcome to attend from 8:30 AM.</p>",
+        + "Parents are welcome to attend from 8:30 AM.</p>",
         0,
         "2026-12-19",
     ),
     (
         "Term 2 Unit Tests from 14 December",
         "<p>Unit Test 2 for all classes begins on 14 December 2026. The subject-wise "
-        "timetable is available on EduPortal under My Timetable.</p>",
+        + "timetable is available on EduPortal under My Timetable.</p>",
         0,
         "2026-12-24",
     ),
     (
         "Admissions open for the 2026-27 mid-year intake",
         "<p>Applications for Standards 5 to 9 are open until 28 February 2027. "
-        "Apply online from the school website or visit the admissions office.</p>",
+        + "Apply online from the school website or visit the admissions office.</p>",
         0,
         "2027-03-01",
     ),
@@ -2345,7 +3560,11 @@ def seed_public_site():
 
     has_address = frappe.get_all(
         "Dynamic Link",
-        filters={"link_doctype": "Company", "link_name": COMPANY, "parenttype": "Address"},
+        filters={
+            "link_doctype": "Company",
+            "link_name": COMPANY,
+            "parenttype": "Address",
+        },
         limit=1,
     )
     if not has_address:
@@ -2371,7 +3590,9 @@ def seed_public_site():
             },
         )
 
-    for adm in frappe.get_all("Student Admission", filters={"published": 1}, pluck="name"):
+    for adm in frappe.get_all(
+        "Student Admission", filters={"published": 1}, pluck="name"
+    ):
         doc = frappe.get_doc("Student Admission", adm)
         dirty = False
         for row in doc.program_details:
@@ -2388,7 +3609,9 @@ def seed_logs():
     program_of = {s[2]: s[5] for s in STUDENTS}
     for email, ltype, date, text in STUDENT_LOGS:
         stu = student_id(email)
-        if frappe.db.exists("Student Log", {"student": stu, "type": ltype, "date": date}):
+        if frappe.db.exists(
+            "Student Log", {"student": stu, "type": ltype, "date": date}
+        ):
             continue
         frappe.get_doc(
             {
@@ -2409,14 +3632,70 @@ def seed_logs():
 def seed_activity():
     attempts = [
         # email, course, topic whose quiz was attempted, answers correct flags, status, when
-        ("rahul.sharma@example.com", "Mathematics - Std 5", "Fractions", [1, 1], "Pass", "2026-11-16 18:20:00"),
-        ("priya.patel@example.com", "Mathematics - Std 5", "Large Numbers", [1, 0], "Pass", "2026-11-17 17:05:00"),
-        ("rahul.sharma@example.com", "EVS - Std 5", "Plants and Animals", [0, 1], "Pass", "2026-11-18 19:10:00"),
-        ("priya.patel@example.com", "English - Std 5", "Nouns, Pronouns and Adjectives", [0, 0], "Fail", "2026-11-19 16:45:00"),
-        ("aarav.mehta@example.com", "Hindi - Std 6", "Vah Chidiya Jo (Kavita)", [1, 1], "Pass", "2026-11-20 18:00:00"),
-        ("rahul.sharma@example.com", "Science - Std 6", "Food and Nutrition", [1, 1], "Pass", "2026-11-20 19:30:00"),
-        ("ananya.shah@example.com", "Science - Std 7", "Nutrition in Plants", [1, 1], "Pass", "2026-11-19 18:40:00"),
-        ("kavya.joshi@example.com", "Computer Science - Std 8", "Algorithms and Flowcharts", [1, 0], "Pass", "2026-11-21 11:15:00"),
+        (
+            "rahul.sharma@example.com",
+            "Mathematics - Std 5",
+            "Fractions",
+            [1, 1],
+            "Pass",
+            "2026-11-16 18:20:00",
+        ),
+        (
+            "priya.patel@example.com",
+            "Mathematics - Std 5",
+            "Large Numbers",
+            [1, 0],
+            "Pass",
+            "2026-11-17 17:05:00",
+        ),
+        (
+            "rahul.sharma@example.com",
+            "EVS - Std 5",
+            "Plants and Animals",
+            [0, 1],
+            "Pass",
+            "2026-11-18 19:10:00",
+        ),
+        (
+            "priya.patel@example.com",
+            "English - Std 5",
+            "Nouns, Pronouns and Adjectives",
+            [0, 0],
+            "Fail",
+            "2026-11-19 16:45:00",
+        ),
+        (
+            "aarav.mehta@example.com",
+            "Hindi - Std 6",
+            "Vah Chidiya Jo (Kavita)",
+            [1, 1],
+            "Pass",
+            "2026-11-20 18:00:00",
+        ),
+        (
+            "rahul.sharma@example.com",
+            "Science - Std 6",
+            "Food and Nutrition",
+            [1, 1],
+            "Pass",
+            "2026-11-20 19:30:00",
+        ),
+        (
+            "ananya.shah@example.com",
+            "Science - Std 7",
+            "Nutrition in Plants",
+            [1, 1],
+            "Pass",
+            "2026-11-19 18:40:00",
+        ),
+        (
+            "kavya.joshi@example.com",
+            "Computer Science - Std 8",
+            "Algorithms and Flowcharts",
+            [1, 0],
+            "Pass",
+            "2026-11-21 11:15:00",
+        ),
     ]
     for email, course, topic, flags, status, dt in attempts:
         stu = student_id(email)
@@ -2434,7 +3713,9 @@ def seed_activity():
         if not enrollment:
             continue
         quiz = quiz_title(topic, program)
-        if not frappe.db.exists("Quiz Activity", {"enrollment": enrollment, "quiz": quiz}):
+        if not frappe.db.exists(
+            "Quiz Activity", {"enrollment": enrollment, "quiz": quiz}
+        ):
             qdoc = frappe.get_doc("Quiz", quiz)
             result = []
             for row, ok in zip(qdoc.question, flags):
@@ -2469,7 +3750,11 @@ def seed_activity():
                 continue
             if frappe.db.exists(
                 "Course Activity",
-                {"enrollment": enrollment, "content_type": tc.content_type, "content": tc.content},
+                {
+                    "enrollment": enrollment,
+                    "content_type": tc.content_type,
+                    "content": tc.content,
+                },
             ):
                 continue
             frappe.get_doc(
@@ -2498,11 +3783,18 @@ def seed_timetable():
     tg.default_maximum_lessons_per_week = 20
     tg.set("time_slots", [])
     for i, (s, e) in enumerate(PERIODS, start=1):
-        tg.append("time_slots", {"period": i, "start_time": s, "end_time": e, "duration": 45})
+        tg.append(
+            "time_slots", {"period": i, "start_time": s, "end_time": e, "duration": 45}
+        )
     tg.set("breaks", [])
     tg.append(
         "breaks",
-        {"break_name": "Morning Break", "start_time": "10:35:00", "end_time": "10:50:00", "duration": 900},
+        {
+            "break_name": "Morning Break",
+            "start_time": "10:35:00",
+            "end_time": "10:50:00",
+            "duration": 900,
+        },
     )
     tg.set("subject_rules", [])
     tg.set("teachers_preference", [])
@@ -2547,7 +3839,15 @@ def seed_timetable():
                 "schedule_date": ["between", [start, start + timedelta(days=4)]],
                 "student_group": ["in", [batch_group(p) for p in PROGRAMS]],
             },
-            fields=["schedule_date", "from_time", "to_time", "course", "instructor", "student_group", "room"],
+            fields=[
+                "schedule_date",
+                "from_time",
+                "to_time",
+                "course",
+                "instructor",
+                "student_group",
+                "room",
+            ],
         )
         base = [dict(r, schedule_date=str(r.schedule_date)) for r in rows]
         snapshot = build_timetable_snapshot(base, tg)
@@ -2586,15 +3886,27 @@ def execute():
     CTX.department = frappe.db.get_value(
         "Department", {"department_name": "Academics", "company": COMPANY}, "name"
     )
-    CTX.rooms = [frappe.db.get_value("Room", {"room_name": r[0]}, "name") for r in ROOMS]
+    CTX.rooms = [
+        frappe.db.get_value("Room", {"room_name": r[0]}, "name") for r in ROOMS
+    ]
 
-    for fn in (seed_setup, seed_masters, seed_assessment_masters, migrate_to_per_class_courses):
+    for fn in (
+        seed_setup,
+        seed_masters,
+        seed_assessment_masters,
+        migrate_to_per_class_courses,
+    ):
         fn()
     leftover = [c for c in LEGACY_COURSES if frappe.db.exists("Course", c)]
     if leftover:
         # never mix the shared and the per-class curriculum
-        log(f"[ABORT] legacy courses still present ({', '.join(leftover)}); fix the migration error above")
-        return {"ok": 0, "failed": [r[0] for r in RESULTS if r[1] != "OK"] or ["migration"]}
+        log(
+            f"[ABORT] legacy courses still present ({', '.join(leftover)}); fix the migration error above"
+        )
+        return {
+            "ok": 0,
+            "failed": [r[0] for r in RESULTS if r[1] != "OK"] or ["migration"],
+        }
 
     for fn in (
         seed_curriculum,
@@ -2617,7 +3929,7 @@ def execute():
     ):
         fn()
 
-    frappe.db.commit()
+    frappe.db.commit()  # nosemgrep: frappe-manual-commit -- bench execute seed script
 
     log("\n==== Education demo data summary ====")
     for title, status, msg in RESULTS:

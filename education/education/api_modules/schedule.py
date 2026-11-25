@@ -76,7 +76,10 @@ def _instructor_group_ids(instructors):
         set(
             frappe.get_all(
                 "Student Group Instructor",
-                filters={"parenttype": "Student Group", "instructor": ["in", instructors]},
+                filters={
+                    "parenttype": "Student Group",
+                    "instructor": ["in", instructors],
+                },
                 pluck="parent",
             )
         )
@@ -89,7 +92,9 @@ def _resolve_instructor_ids(value):
         return []
     if frappe.db.exists("Instructor", value):
         return [value]
-    return frappe.get_all("Instructor", filters={"instructor_name": value}, pluck="name")
+    return frappe.get_all(
+        "Instructor", filters={"instructor_name": value}, pluck="name"
+    )
 
 
 def _get_schedule_scope(student=None):
@@ -117,7 +122,10 @@ def _get_schedule_scope(student=None):
         return {"all": True}
 
     if instructors or _has_any_role({"Instructor"}):
-        return {"groups": _instructor_group_ids(instructors), "instructors": instructors}
+        return {
+            "groups": _instructor_group_ids(instructors),
+            "instructors": instructors,
+        }
 
     students = _get_viewable_students(student)
     return {"groups": _student_group_ids(students), "students": students}
@@ -245,7 +253,9 @@ def _course_instructor_map(courses=None):
     log_filters = {"parenttype": "Instructor", "course": ["is", "set"]}
     if courses:
         log_filters["course"] = ["in", courses]
-    for row in frappe.get_all("Instructor Log", filters=log_filters, fields=["parent", "course"]):
+    for row in frappe.get_all(
+        "Instructor Log", filters=log_filters, fields=["parent", "course"]
+    ):
         mapping.setdefault(row.course, set()).add(row.parent)
 
     sg = frappe.qb.DocType("Student Group")
@@ -276,7 +286,9 @@ def get_eligible_instructors(course: str = None, student_group: str = None):
         assigned = frappe.get_all(
             "Student Group Instructor", {"parent": student_group}, pluck="instructor"
         )
-        group_based_on = frappe.db.get_value("Student Group", student_group, "group_based_on")
+        group_based_on = frappe.db.get_value(
+            "Student Group", student_group, "group_based_on"
+        )
         if group_based_on == "Course" and assigned:
             return assigned
         eligible.extend(assigned)
@@ -295,7 +307,12 @@ def get_schedule_metadata():
     Staff only."""
     _require_staff(_("plan course schedules"))
 
-    courses = frappe.get_all("Course", fields=["name", "course_name"], order_by="course_name asc", limit_page_length=0)
+    courses = frappe.get_all(
+        "Course",
+        fields=["name", "course_name"],
+        order_by="course_name asc",
+        limit_page_length=0,
+    )
     instructors = frappe.get_all(
         "Instructor",
         fields=["name", "instructor_name", "department"],
@@ -305,7 +322,15 @@ def get_schedule_metadata():
     )
     student_groups = frappe.get_all(
         "Student Group",
-        fields=["name", "student_group_name", "program", "course", "group_based_on", "academic_year", "default_room"],
+        fields=[
+            "name",
+            "student_group_name",
+            "program",
+            "course",
+            "group_based_on",
+            "academic_year",
+            "default_room",
+        ],
         filters={"disabled": 0},
         order_by="student_group_name asc",
         limit_page_length=0,
@@ -326,15 +351,23 @@ def get_schedule_metadata():
         fields=["parent", "instructor", "instructor_name"],
         limit_page_length=0,
     ):
-        group_instructors.setdefault(row.parent, []).append({
-            "name": row.instructor,
-            "instructor_name": row.instructor_name or row.instructor,
-        })
+        group_instructors.setdefault(row.parent, []).append(
+            {
+                "name": row.instructor,
+                "instructor_name": row.instructor_name or row.instructor,
+            }
+        )
 
     course_instructors = {}
     for course, ins_ids in _course_instructor_map().items():
         course_instructors[course] = [
-            {"name": i, "instructor_name": (instructor_lookup.get(i) or {}).get("instructor_name") or i}
+            {
+                "name": i,
+                "instructor_name": (instructor_lookup.get(i) or {}).get(
+                    "instructor_name"
+                )
+                or i,
+            }
             for i in ins_ids
         ]
 
@@ -352,7 +385,15 @@ def get_schedule_metadata():
 
 
 @frappe.whitelist(methods=["POST"])
-def create_course_schedule(course, student_group, instructor, schedule_date, from_time, to_time, room=None):
+def create_course_schedule(
+    course: str,
+    student_group: str,
+    instructor: str,
+    schedule_date: str,
+    from_time: str,
+    to_time: str,
+    room: str | None = None,
+):
     _require_staff(_("schedule lectures"))
     if not frappe.db.exists("Instructor", instructor):
         ids = _resolve_instructor_ids(instructor)
@@ -372,7 +413,6 @@ def create_course_schedule(course, student_group, instructor, schedule_date, fro
     if program:
         doc.program = program
     doc.insert(ignore_permissions=True)
-    frappe.db.commit()
     return doc.as_dict()
 
 
@@ -382,14 +422,21 @@ def delete_course_schedule(course_schedule: str):
     if not course_schedule:
         frappe.throw(_("Course Schedule ID is required"))
     if frappe.db.exists("Course Schedule", course_schedule):
-        att_count = frappe.db.count("Student Attendance", {"course_schedule": course_schedule, "docstatus": ("!=", 2)})
+        att_count = frappe.db.count(
+            "Student Attendance",
+            {"course_schedule": course_schedule, "docstatus": ("!=", 2)},
+        )
         if att_count > 0:
             frappe.throw(
-                _("Cannot delete lecture schedule: {0} attendance records are already submitted for this class.").format(att_count)
+                _(
+                    "Cannot delete lecture schedule: {0} attendance records are already submitted for this class."
+                ).format(att_count)
             )
         frappe.delete_doc("Course Schedule", course_schedule, ignore_permissions=True)
-        frappe.db.commit()
-        return {"status": "success", "message": _("Lecture schedule cancelled successfully.")}
+        return {
+            "status": "success",
+            "message": _("Lecture schedule cancelled successfully."),
+        }
     return {"status": "not_found", "message": _("Schedule record not found.")}
 
 
@@ -417,6 +464,7 @@ def bulk_schedule_course(
 ):
     import calendar
     from frappe.utils import add_days, get_time, getdate
+
     _require_staff(_("schedule lectures"))
 
     if isinstance(days, str):
@@ -457,12 +505,19 @@ def bulk_schedule_course(
     # Validate faculty subject qualification
     eligible = get_eligible_instructors(course=course, student_group=student_group)
     if eligible and instructor not in eligible:
-        ins_name = frappe.db.get_value("Instructor", instructor, "instructor_name") or instructor
+        ins_name = (
+            frappe.db.get_value("Instructor", instructor, "instructor_name")
+            or instructor
+        )
         frappe.throw(
-            _("Faculty {0} is not qualified or assigned to teach {1}.").format(ins_name, course)
+            _("Faculty {0} is not qualified or assigned to teach {1}.").format(
+                ins_name, course
+            )
         )
 
-    instructor_name = frappe.db.get_value("Instructor", instructor, "instructor_name") or instructor
+    instructor_name = (
+        frappe.db.get_value("Instructor", instructor, "instructor_name") or instructor
+    )
     program = frappe.db.get_value("Student Group", student_group, "program")
 
     rescheduled = []
@@ -491,7 +546,8 @@ def bulk_schedule_course(
             if calendar.day_name[getdate(old.schedule_date).weekday()] not in days:
                 continue
             att_count = frappe.db.count(
-                "Student Attendance", {"course_schedule": old.name, "docstatus": ("!=", 2)}
+                "Student Attendance",
+                {"course_schedule": old.name, "docstatus": ("!=", 2)},
             )
             if att_count:
                 reschedule_errors.append(
@@ -534,29 +590,31 @@ def bulk_schedule_course(
                     cs.program = program
                     cs.class_schedule_color = class_schedule_color or "blue"
                     cs.insert(ignore_permissions=True)
-                    created.append({
-                        "name": cs.name,
-                        "schedule_date": date_str,
-                        "day": day_name,
-                        "course": course,
-                        "room": room,
-                        "instructor": instructor_name,
-                        "from_time": from_time,
-                        "to_time": to_time,
-                    })
+                    created.append(
+                        {
+                            "name": cs.name,
+                            "schedule_date": date_str,
+                            "day": day_name,
+                            "course": course,
+                            "room": room,
+                            "instructor": instructor_name,
+                            "from_time": from_time,
+                            "to_time": to_time,
+                        }
+                    )
                 except frappe.ValidationError as ex:
                     # e.g. OverlapError (instructor / room / group already booked) or a date
                     # outside the academic term: skip this date and report it (like the desk).
                     if frappe.local.message_log:
                         frappe.local.message_log.pop()
-                    errors.append({
-                        "date": date_str,
-                        "day": day_name,
-                        "error": frappe.utils.strip_html(str(ex)),
-                    })
+                    errors.append(
+                        {
+                            "date": date_str,
+                            "day": day_name,
+                            "error": frappe.utils.strip_html(str(ex)),
+                        }
+                    )
         curr_date = add_days(curr_date, 1)
-
-    frappe.db.commit()
 
     if not created and errors:
         return {
@@ -571,7 +629,11 @@ def bulk_schedule_course(
             "message": errors[0].get("error", _("Failed to create course schedules.")),
         }
 
-    resched_note = _(" ({0} existing slots replaced)").format(len(rescheduled)) if rescheduled else ""
+    resched_note = (
+        " " + _("({0} existing slots replaced)").format(len(rescheduled))
+        if rescheduled
+        else ""
+    )
     return {
         "status": "success",
         "created_count": len(created),
@@ -581,6 +643,7 @@ def bulk_schedule_course(
         "rescheduled_count": len(rescheduled),
         "rescheduled": rescheduled,
         "reschedule_errors": reschedule_errors,
-        "message": _("{0} lecture schedules created successfully{1}.").format(len(created), resched_note),
+        "message": _("{0} lecture schedules created successfully{1}.").format(
+            len(created), resched_note
+        ),
     }
-

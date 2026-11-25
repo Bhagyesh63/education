@@ -36,7 +36,9 @@ def _require_enrollment_permission():
         frappe.throw(_("Please log in to continue."), frappe.PermissionError)
     if not frappe.has_permission("Program Enrollment", "create"):
         frappe.throw(
-            _("You are not permitted to enroll students (Program Enrollment create permission required)."),
+            _(
+                "You are not permitted to enroll students (Program Enrollment create permission required)."
+            ),
             frappe.PermissionError,
         )
 
@@ -54,23 +56,44 @@ def _as_list(value):
 def get_program_enrollment_tool_metadata():
     _require_enrollment_permission()
     return {
-        "programs": frappe.get_all("Program", fields=["name", "program_name"], order_by="name asc"),
+        "programs": frappe.get_all(
+            "Program", fields=["name", "program_name"], order_by="name asc"
+        ),
         "academic_years": frappe.get_all(
-            "Academic Year", fields=["name", "year_start_date", "year_end_date"], order_by="year_start_date desc"
+            "Academic Year",
+            fields=["name", "year_start_date", "year_end_date"],
+            order_by="year_start_date desc",
         ),
         "academic_terms": frappe.get_all(
             "Academic Term",
-            fields=["name", "academic_year", "term_name", "term_start_date", "term_end_date"],
+            fields=[
+                "name",
+                "academic_year",
+                "term_name",
+                "term_start_date",
+                "term_end_date",
+            ],
             order_by="term_start_date desc",
         ),
-        "student_batches": frappe.get_all("Student Batch Name", pluck="name", order_by="name asc"),
+        "student_batches": frappe.get_all(
+            "Student Batch Name", pluck="name", order_by="name asc"
+        ),
         "student_groups": frappe.get_all(
             "Student Group",
             filters={"disabled": 0},
-            fields=["name", "program", "academic_year", "academic_term", "group_based_on", "batch"],
+            fields=[
+                "name",
+                "program",
+                "academic_year",
+                "academic_term",
+                "group_based_on",
+                "batch",
+            ],
             order_by="name asc",
         ),
-        "academic_term_reqd": cint(frappe.db.get_single_value("Education Settings", "academic_term_reqd")),
+        "academic_term_reqd": cint(
+            frappe.db.get_single_value("Education Settings", "academic_term_reqd")
+        ),
     }
 
 
@@ -88,7 +111,9 @@ def get_program_enrollment_tool_students(
     """Students the tool can enroll, each flagged with `already_enrolled` for the target."""
     _require_enrollment_permission()
     if get_students_from not in (SOURCE_ENROLLMENT, SOURCE_APPLICANT):
-        frappe.throw(_("Get Students From must be Program Enrollment or Student Applicant."))
+        frappe.throw(
+            _("Get Students From must be Program Enrollment or Student Applicant.")
+        )
     if not program or not academic_year:
         frappe.throw(_("Program and Academic Year are required."))
 
@@ -104,7 +129,13 @@ def get_program_enrollment_tool_students(
         applicants = frappe.get_all(
             "Student Applicant",
             filters=filters,
-            fields=["name", "title", "student_category", "academic_term", "student_email_id"],
+            fields=[
+                "name",
+                "title",
+                "student_category",
+                "academic_term",
+                "student_email_id",
+            ],
             order_by="title asc",
         )
         rows = []
@@ -137,7 +168,14 @@ def get_program_enrollment_tool_students(
     enrollments = frappe.get_all(
         "Program Enrollment",
         filters=filters,
-        fields=["name", "student", "student_name", "student_batch_name", "student_category", "academic_term"],
+        fields=[
+            "name",
+            "student",
+            "student_name",
+            "student_batch_name",
+            "student_category",
+            "academic_term",
+        ],
         order_by="student_name asc",
     )
 
@@ -151,7 +189,9 @@ def get_program_enrollment_tool_students(
             continue
         existing = None
         if new_program and new_academic_year:
-            existing = _existing_enrollment(e.student, new_program, new_academic_year, new_academic_term)
+            existing = _existing_enrollment(
+                e.student, new_program, new_academic_year, new_academic_term
+            )
         rows.append(
             {
                 "key": e.student,
@@ -213,13 +253,20 @@ def enroll_students_via_tool(
     if get_students_from == SOURCE_ENROLLMENT:
         if not new_program or not new_academic_year:
             frappe.throw(_("New Program and New Academic Year are required."))
-        for doctype, value in (("Program", new_program), ("Academic Year", new_academic_year)):
+        for doctype, value in (
+            ("Program", new_program),
+            ("Academic Year", new_academic_year),
+        ):
             if not frappe.db.exists(doctype, value):
                 frappe.throw(_("{0} {1} does not exist.").format(_(doctype), value))
         if new_academic_term:
-            term_year = frappe.db.get_value("Academic Term", new_academic_term, "academic_year")
+            term_year = frappe.db.get_value(
+                "Academic Term", new_academic_term, "academic_year"
+            )
             if term_year is None:
-                frappe.throw(_("Academic Term {0} does not exist.").format(new_academic_term))
+                frappe.throw(
+                    _("Academic Term {0} does not exist.").format(new_academic_term)
+                )
             if term_year != new_academic_year:
                 frappe.throw(
                     _("Academic Term {0} does not belong to Academic Year {1}.").format(
@@ -227,16 +274,27 @@ def enroll_students_via_tool(
                     )
                 )
     elif get_students_from != SOURCE_APPLICANT:
-        frappe.throw(_("Get Students From must be Program Enrollment or Student Applicant."))
+        frappe.throw(
+            _("Get Students From must be Program Enrollment or Student Applicant.")
+        )
 
-    if new_student_batch and not frappe.db.exists("Student Batch Name", new_student_batch):
+    if new_student_batch and not frappe.db.exists(
+        "Student Batch Name", new_student_batch
+    ):
         frappe.throw(_("Student Batch {0} does not exist.").format(new_student_batch))
     if student_group:
         group = frappe.db.get_value(
-            "Student Group", student_group, ["program", "academic_year", "disabled"], as_dict=True
+            "Student Group",
+            student_group,
+            ["program", "academic_year", "disabled"],
+            as_dict=True,
         )
         if not group or group.disabled:
-            frappe.throw(_("Student Group {0} does not exist or is disabled.").format(student_group))
+            frappe.throw(
+                _("Student Group {0} does not exist or is disabled.").format(
+                    student_group
+                )
+            )
     if enrollment_date:
         enrollment_date = getdate(enrollment_date)
 
@@ -249,14 +307,27 @@ def enroll_students_via_tool(
         try:
             if get_students_from == SOURCE_ENROLLMENT:
                 result = _enroll_existing_student(
-                    row, new_program, new_academic_year, new_academic_term,
-                    new_student_batch, enrollment_date, submit,
+                    row,
+                    new_program,
+                    new_academic_year,
+                    new_academic_term,
+                    new_student_batch,
+                    enrollment_date,
+                    submit,
                 )
             else:
-                result = _enroll_applicant(row, new_academic_term, new_student_batch, enrollment_date, submit)
+                result = _enroll_applicant(
+                    row, new_academic_term, new_student_batch, enrollment_date, submit
+                )
 
             if result.get("skipped"):
-                skipped.append({"student": label, "student_name": row.student_name, "reason": result["skipped"]})
+                skipped.append(
+                    {
+                        "student": label,
+                        "student_name": row.student_name,
+                        "reason": result["skipped"],
+                    }
+                )
                 frappe.db.rollback(save_point=savepoint)
                 continue
 
@@ -288,7 +359,9 @@ def enroll_students_via_tool(
     }
 
 
-def _enroll_existing_student(row, program, academic_year, academic_term, batch, enrollment_date, submit):
+def _enroll_existing_student(
+    row, program, academic_year, academic_term, batch, enrollment_date, submit
+):
     if not row.student or not frappe.db.exists("Student", row.student):
         return {"skipped": _("Student not found")}
     if not frappe.db.get_value("Student", row.student, "enabled"):
@@ -301,13 +374,17 @@ def _enroll_existing_student(row, program, academic_year, academic_term, batch, 
     pe.student = row.student
     category = row.student_category
     if not category and row.current_enrollment:
-        category = frappe.db.get_value("Program Enrollment", row.current_enrollment, "student_category")
+        category = frappe.db.get_value(
+            "Program Enrollment", row.current_enrollment, "student_category"
+        )
     pe.student_category = category
     pe.program = program
     pe.academic_year = academic_year
     pe.academic_term = academic_term
     pe.student_batch_name = batch or row.student_batch_name
-    pe.enrollment_date = enrollment_date or _default_enrollment_date(academic_year, academic_term)
+    pe.enrollment_date = enrollment_date or _default_enrollment_date(
+        academic_year, academic_term
+    )
     pe.insert()
     if submit:
         pe.submit()
@@ -326,15 +403,26 @@ def _enroll_applicant(row, academic_term, batch, enrollment_date, submit):
         return {"skipped": _("Student Applicant not found")}
     applicant = frappe.get_doc("Student Applicant", applicant_name)
     if applicant.application_status != "Approved":
-        return {"skipped": _("Application status is {0}, not Approved").format(applicant.application_status)}
-    existing_student = frappe.db.get_value("Student", {"student_applicant": applicant_name}, "name")
+        return {
+            "skipped": _("Application status is {0}, not Approved").format(
+                applicant.application_status
+            )
+        }
+    existing_student = frappe.db.get_value(
+        "Student", {"student_applicant": applicant_name}, "name"
+    )
     if existing_student:
         return {"skipped": _("Already admitted as {0}").format(existing_student)}
 
     student = get_mapped_doc(
         "Student Applicant",
         applicant_name,
-        {"Student Applicant": {"doctype": "Student", "field_map": {"name": "student_applicant"}}},
+        {
+            "Student Applicant": {
+                "doctype": "Student",
+                "field_map": {"name": "student_applicant"},
+            }
+        },
         ignore_permissions=True,
     )
     student.insert(ignore_permissions=True)
@@ -348,12 +436,16 @@ def _enroll_applicant(row, academic_term, batch, enrollment_date, submit):
     pe.academic_year = applicant.academic_year
     pe.academic_term = term
     pe.student_batch_name = batch
-    pe.enrollment_date = enrollment_date or _default_enrollment_date(applicant.academic_year, term)
+    pe.enrollment_date = enrollment_date or _default_enrollment_date(
+        applicant.academic_year, term
+    )
     pe.insert()
     if submit:
         pe.submit()
 
-    frappe.db.set_value("Student Applicant", applicant_name, "application_status", "Admitted")
+    frappe.db.set_value(
+        "Student Applicant", applicant_name, "application_status", "Admitted"
+    )
     return {
         "student": student.name,
         "student_name": student.student_name,

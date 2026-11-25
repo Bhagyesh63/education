@@ -14,6 +14,7 @@ DEMO_ACCOUNT_LIMITS = {"students": 12, "teachers": 8, "guardians": 8}
 PREVIEW_TARGET_LIMIT = 50
 
 
+# nosemgrep: guest-whitelisted-method -- returns only a Guest stub when not logged in
 @frappe.whitelist(allow_guest=True)
 def get_user_info():
     if frappe.session.user == "Guest":
@@ -31,13 +32,18 @@ def get_user_info():
     return current_user
 
 
+# nosemgrep: guest-whitelisted-method -- returns "Guest" when not logged in
 @frappe.whitelist(allow_guest=True)
 def get_user_role():
     if frappe.session.user == "Guest":
         return "Guest"
 
     roles = frappe.get_roles()
-    if "System Manager" in roles or "Education Manager" in roles or "Administrator" in roles:
+    if (
+        "System Manager" in roles
+        or "Education Manager" in roles
+        or "Administrator" in roles
+    ):
         return "Administrator"
     if "Instructor" in roles or "Academics User" in roles:
         return "Instructor"
@@ -49,6 +55,7 @@ def get_user_role():
     return "Student"
 
 
+# nosemgrep: guest-whitelisted-method -- public school name and logo for the login/landing page
 @frappe.whitelist(allow_guest=True)
 def get_school_abbr_logo():
     abbr = frappe.db.get_single_value(
@@ -58,6 +65,7 @@ def get_school_abbr_logo():
     return {"name": abbr, "logo": logo}
 
 
+# nosemgrep: guest-whitelisted-method -- returns None for Guest; SPA fetches the token before writes
 @frappe.whitelist(allow_guest=True, methods=["GET"])
 def get_csrf_token():
     """CSRF token of the current session, for the SPA's write requests.
@@ -71,30 +79,32 @@ def get_csrf_token():
     return _session_csrf_token()
 
 
+# nosemgrep: guest-whitelisted-method -- login endpoint, must be callable before a session exists
 @frappe.whitelist(allow_guest=True, methods=["POST"])
-def portal_login(usr=None, pwd=None):
-    """High-speed portal authentication: authenticates credentials, establishes session,
-    and returns complete pre-hydrated portal context in a single round-trip."""
-    if not usr or not pwd:
-        usr = usr or frappe.form_dict.get("usr")
-        pwd = pwd or frappe.form_dict.get("pwd")
+def portal_login(usr: str | None = None, pwd: str | None = None):
+    """Portal authentication: logs in through Frappe's standard LoginManager flow and
+    returns the pre-hydrated portal context in the same round-trip."""
+    usr = usr or frappe.form_dict.get("usr")
+    pwd = pwd or frappe.form_dict.get("pwd")
 
     if not usr or not pwd:
         frappe.throw(_("Email and Password are required"), frappe.AuthenticationError)
 
-    from frappe.auth import LoginManager
-    login_manager = LoginManager()
-    login_manager.authenticate(user=usr, pwd=pwd)
+    # Standard login: before_login / on_login / on_session_creation hooks, disabled
+    # password login, login attempt tracking, 2FA, IP restriction, login hours and
+    # forced password reset all apply exactly as for /api/method/login.
+    frappe.form_dict.usr = usr
+    frappe.form_dict.pwd = pwd
+    login_manager = frappe.local.login_manager
+    if login_manager.login() is False:
+        # 2FA verification or password reset pending: frappe.local.response already
+        # carries the standard payload for the client; no session was created.
+        return None
 
-    # Fast session initialization without redundant desk table count scans
-    login_manager.run_trigger("on_login")
-    login_manager.validate_hour()
-    login_manager.get_user_info()
-    login_manager.make_session()
-    login_manager.set_user_info()
-
-    frappe.set_user(login_manager.user)
-    frappe.db.commit()
+    # login() switched frappe.session to the new user; drop permission data that may
+    # have been cached for Guest earlier in this request.
+    frappe.local.user_perms = None
+    frappe.local.role_permissions = {}
 
     context = get_portal_context()
 
@@ -129,7 +139,9 @@ def _apply_student_context(context, stu_id):
         context["active_program"] = active_p
         context["active_academic_year"] = active_y
         context["active_enrollment_id"] = active_enr
-        p_ctx = get_program_context(stu_id, active_p, academic_year=active_y, program_enrollment=active_enr)
+        p_ctx = get_program_context(
+            stu_id, active_p, academic_year=active_y, program_enrollment=active_enr
+        )
         context["enrollment"] = p_ctx.get("enrollment")
         context["student_groups"] = p_ctx.get("student_groups")
     return context
@@ -147,9 +159,14 @@ def _apply_guardian_context(context, guardians):
 
 
 def _apply_staff_context(context):
-    db_programs = frappe.get_all("Program", fields=["name as program"], order_by="name asc")
+    db_programs = frappe.get_all(
+        "Program", fields=["name as program"], order_by="name asc"
+    )
     db_groups = frappe.get_all(
-        "Student Group", filters={"disabled": 0}, fields=["name as label"], order_by="name asc"
+        "Student Group",
+        filters={"disabled": 0},
+        fields=["name as label"],
+        order_by="name asc",
     )
     context["programs"] = db_programs or []
     context["student_groups"] = db_groups or []
@@ -161,10 +178,14 @@ def _get_instructor_details(instructor):
     if not instructor:
         return None
     return frappe.db.get_value(
-        "Instructor", instructor, ["name", "instructor_name", "department"], as_dict=True
+        "Instructor",
+        instructor,
+        ["name", "instructor_name", "department"],
+        as_dict=True,
     )
 
 
+# nosemgrep: guest-whitelisted-method -- returns an empty stub for Guest (SPA bootstrap)
 @frappe.whitelist(allow_guest=True)
 def get_portal_context():
     """Returns role-aware bootstrap data for the portal SPA."""
@@ -179,7 +200,11 @@ def get_portal_context():
     role = get_user_role()
     # get_user_role() falls back to "Student" for users without any education role;
     # such users have no portal profile, so report no role instead of an empty student.
-    if role == "Student" and "Student" not in frappe.get_roles() and not _resolve_portal_student():
+    if (
+        role == "Student"
+        and "Student" not in frappe.get_roles()
+        and not _resolve_portal_student()
+    ):
         role = None
 
     full_name = frappe.db.get_value("User", current_user, "full_name") or current_user
@@ -193,7 +218,9 @@ def get_portal_context():
         if stu_id:
             _apply_student_context(context, stu_id)
     elif role == "Instructor":
-        context["instructor"] = _get_instructor_details(get_instructor_for_user(current_user))
+        context["instructor"] = _get_instructor_details(
+            get_instructor_for_user(current_user)
+        )
         _apply_staff_context(context)
     elif role == "Administrator":
         context["admin"] = {"user": current_user, "name": full_name}
@@ -254,11 +281,13 @@ def _get_wards_for_guardians(guardians):
     return list(wards.values())
 
 
+# nosemgrep: guest-whitelisted-method -- returns None for Guest (no guardian is linked to Guest)
 @frappe.whitelist(allow_guest=True)
 def get_guardian_info():
     return _get_guardian_details(get_guardian_for_user())
 
 
+# nosemgrep: guest-whitelisted-method -- returns [] for Guest (no guardian is linked to Guest)
 @frappe.whitelist(allow_guest=True)
 def get_guardian_students():
     return _get_wards_for_guardians(get_guardians_for_user())
@@ -267,6 +296,7 @@ def get_guardian_students():
 # ==============================================================================
 # Developer-mode login directory
 # ==============================================================================
+
 
 def _enabled_user_emails(candidates):
     """Map candidate user ids/emails -> enabled User email (never exposes anything else)."""
@@ -312,7 +342,9 @@ def _demo_students(limit):
         order_by="creation asc",
         limit=limit * 3,
     )
-    emails = _enabled_user_emails([r.user for r in rows] + [r.student_email_id for r in rows])
+    emails = _enabled_user_emails(
+        [r.user for r in rows] + [r.student_email_id for r in rows]
+    )
     picked = []
     for r in rows:
         email = emails.get(r.user) or emails.get(r.student_email_id)
@@ -340,7 +372,9 @@ def _demo_guardians(limit):
         order_by="creation asc",
         limit=limit * 3,
     )
-    emails = _enabled_user_emails([r.user for r in rows] + [r.email_address for r in rows])
+    emails = _enabled_user_emails(
+        [r.user for r in rows] + [r.email_address for r in rows]
+    )
     picked = []
     for r in rows:
         email = emails.get(r.user) or emails.get(r.email_address)
@@ -353,31 +387,53 @@ def _demo_guardians(limit):
     if picked:
         for w in frappe.get_all(
             "Student Guardian",
-            filters={"guardian": ["in", [r.name for r, _e in picked]], "parenttype": "Student"},
+            filters={
+                "guardian": ["in", [r.name for r, _e in picked]],
+                "parenttype": "Student",
+            },
             fields=["guardian", "parent", "relation"],
             order_by="idx asc",
         ):
             wards.setdefault(w.guardian, []).append(w)
-        student_names = dict(
-            frappe.get_all(
-                "Student",
-                filters={"name": ["in", list({w.parent for ws in wards.values() for w in ws})]},
-                fields=["name", "student_name"],
-                as_list=True,
+        student_names = (
+            dict(
+                frappe.get_all(
+                    "Student",
+                    filters={
+                        "name": [
+                            "in",
+                            list({w.parent for ws in wards.values() for w in ws}),
+                        ]
+                    },
+                    fields=["name", "student_name"],
+                    as_list=True,
+                )
             )
-        ) if wards else {}
+            if wards
+            else {}
+        )
 
     out = []
     for r, email in picked:
         ws = wards.get(r.name, [])
         if ws:
             relation = ws[0].relation
-            label = _("Parent") if relation in ("Father", "Mother", None, "") else relation
+            label = (
+                _("Parent") if relation in ("Father", "Mother", None, "") else relation
+            )
             names = ", ".join(student_names.get(w.parent, w.parent) for w in ws)
             badge = _("{0} of {1}").format(label, names)
         else:
             badge = _("No linked students")
-        out.append({"id": r.name, "name": r.guardian_name, "email": email, "badge": badge, "role": "Guardian"})
+        out.append(
+            {
+                "id": r.name,
+                "name": r.guardian_name,
+                "email": email,
+                "badge": badge,
+                "role": "Guardian",
+            }
+        )
     return out
 
 
@@ -419,18 +475,24 @@ def _demo_teachers(limit):
 
     candidates = {}
     for i in instructors:
-        candidates[i.name] = employee_users.get(i.employee) or name_to_user.get(i.instructor_name)
+        candidates[i.name] = employee_users.get(i.employee) or name_to_user.get(
+            i.instructor_name
+        )
     emails = _enabled_user_emails(list(candidates.values()))
 
     departments = list({i.department for i in instructors if i.department})
-    department_names = dict(
-        frappe.get_all(
-            "Department",
-            filters={"name": ["in", departments]},
-            fields=["name", "department_name"],
-            as_list=True,
+    department_names = (
+        dict(
+            frappe.get_all(
+                "Department",
+                filters={"name": ["in", departments]},
+                fields=["name", "department_name"],
+                as_list=True,
+            )
         )
-    ) if departments and frappe.db.exists("DocType", "Department") else {}
+        if departments and frappe.db.exists("DocType", "Department")
+        else {}
+    )
 
     out = []
     for i in instructors:
@@ -448,12 +510,21 @@ def _demo_teachers(limit):
                 limit=2,
             )
             badge = ", ".join(c.course for c in courses if c.course) or _("Faculty")
-        out.append({"id": i.name, "name": i.instructor_name, "email": email, "badge": badge, "role": "Teacher / Faculty"})
+        out.append(
+            {
+                "id": i.name,
+                "name": i.instructor_name,
+                "email": email,
+                "badge": badge,
+                "role": "Teacher / Faculty",
+            }
+        )
         if len(out) >= limit:
             break
     return out
 
 
+# nosemgrep: guest-whitelisted-method -- login quick-pick, empty unless developer_mode is on
 @frappe.whitelist(allow_guest=True)
 def get_demo_accounts():
     """Quick-pick login directory built from real Student / Instructor / Guardian users.
@@ -476,6 +547,7 @@ def get_demo_accounts():
 # ==============================================================================
 # Administrator "preview as" (System Manager only)
 # ==============================================================================
+
 
 @frappe.whitelist()
 def get_preview_targets():
@@ -502,20 +574,29 @@ def get_preview_targets():
     if guardians:
         ward_rows = frappe.get_all(
             "Student Guardian",
-            filters={"guardian": ["in", [g.name for g in guardians]], "parenttype": "Student"},
+            filters={
+                "guardian": ["in", [g.name for g in guardians]],
+                "parenttype": "Student",
+            },
             fields=["guardian", "parent"],
         )
-        student_names = dict(
-            frappe.get_all(
-                "Student",
-                filters={"name": ["in", list({w.parent for w in ward_rows})]},
-                fields=["name", "student_name"],
-                as_list=True,
+        student_names = (
+            dict(
+                frappe.get_all(
+                    "Student",
+                    filters={"name": ["in", list({w.parent for w in ward_rows})]},
+                    fields=["name", "student_name"],
+                    as_list=True,
+                )
             )
-        ) if ward_rows else {}
+            if ward_rows
+            else {}
+        )
         wards = {}
         for w in ward_rows:
-            wards.setdefault(w.guardian, []).append(student_names.get(w.parent, w.parent))
+            wards.setdefault(w.guardian, []).append(
+                student_names.get(w.parent, w.parent)
+            )
         for g in guardians:
             g["badge"] = ", ".join(wards.get(g.name, [])) or None
 
@@ -531,25 +612,36 @@ def get_preview_targets():
 
 
 @frappe.whitelist()
-def get_preview_context(target_role, target):
+def get_preview_context(target_role: str, target: str):
     """Portal bootstrap context for a specific real record, for administrator preview."""
     frappe.only_for("System Manager")
 
     if target_role == "Student":
         if not frappe.db.exists("Student", target):
-            frappe.throw(_("Student {0} not found").format(target), frappe.DoesNotExistError)
+            frappe.throw(
+                _("Student {0} not found").format(target), frappe.DoesNotExistError
+            )
         name = frappe.db.get_value("Student", target, "student_name")
-        context = {"role": "Student", "user": frappe.session.user, "full_name": name, "student": target}
+        context = {
+            "role": "Student",
+            "user": frappe.session.user,
+            "full_name": name,
+            "student": target,
+        }
         _apply_student_context(context, target)
     elif target_role == "Guardian":
         if not frappe.db.exists("Guardian", target):
-            frappe.throw(_("Guardian {0} not found").format(target), frappe.DoesNotExistError)
+            frappe.throw(
+                _("Guardian {0} not found").format(target), frappe.DoesNotExistError
+            )
         name = frappe.db.get_value("Guardian", target, "guardian_name")
         context = {"role": "Guardian", "user": frappe.session.user, "full_name": name}
         _apply_guardian_context(context, [target])
     elif target_role == "Instructor":
         if not frappe.db.exists("Instructor", target):
-            frappe.throw(_("Instructor {0} not found").format(target), frappe.DoesNotExistError)
+            frappe.throw(
+                _("Instructor {0} not found").format(target), frappe.DoesNotExistError
+            )
         details = _get_instructor_details(target)
         context = {
             "role": "Instructor",

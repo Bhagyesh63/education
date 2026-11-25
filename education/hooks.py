@@ -214,9 +214,9 @@ has_permission = {
 # Hook on document methods and events
 
 doc_events = {
-	"File": {
-		"before_insert": "education.file_security.enforce_private_attachment",
-	}
+    "File": {
+        "before_insert": "education.file_security.enforce_private_attachment",
+    }
 }
 
 # Scheduled Tasks

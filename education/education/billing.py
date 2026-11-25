@@ -21,7 +21,9 @@ def get_client():
         import razorpay
     except ImportError:
         frappe.throw(
-            _("Online payments are not available: the payment gateway is not installed."),
+            _(
+                "Online payments are not available: the payment gateway is not installed."
+            ),
             title=_("Payment Gateway Unavailable"),
         )
     settings = frappe.get_single("Education Settings")

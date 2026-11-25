@@ -28,7 +28,16 @@ def get_quiz_status(quiz_name: str, student: str = None):
 
     quiz_doc = frappe.get_doc("Quiz", quiz_name)
     user_roles = frappe.get_roles()
-    is_staff = any(r in user_roles for r in ["Instructor", "Academics User", "Education Manager", "System Manager", "Administrator"])
+    is_staff = any(
+        r in user_roles
+        for r in [
+            "Instructor",
+            "Academics User",
+            "Education Manager",
+            "System Manager",
+            "Administrator",
+        ]
+    )
 
     student_id = student or _resolve_portal_student()
     max_attempts = int(quiz_doc.max_attempts or 2)
@@ -65,7 +74,7 @@ def get_quiz_status(quiz_name: str, student: str = None):
         "Quiz Activity",
         filters={"quiz": quiz_name, "student": student_id},
         fields=["name", "score", "status", "activity_date", "creation"],
-        order_by="creation asc"
+        order_by="creation asc",
     )
 
     attempts_used = len(existing_activities)
@@ -102,7 +111,7 @@ def _quiz_review(quiz_doc, answers, reveal):
         correct_opts, explanation, is_correct = [], "", False
         if q_row.question_link and frappe.db.exists("Question", q_row.question_link):
             q_doc = frappe.get_doc("Question", q_row.question_link)
-            for opt in (q_doc.options or []):
+            for opt in q_doc.options or []:
                 if opt.is_correct:
                     correct_opts.append(opt.option)
                     explanation = explanation or (getattr(opt, "explanation", "") or "")
@@ -117,7 +126,13 @@ def _quiz_review(quiz_doc, answers, reveal):
 
 
 @frappe.whitelist(methods=["POST"])
-def submit_quiz_assessment(quiz_name: str, answers, course_name: str = None, student: str = None, time_taken: float = 0):
+def submit_quiz_assessment(
+    quiz_name: str,
+    answers: dict | str | None,
+    course_name: str = None,
+    student: str = None,
+    time_taken: float = 0,
+):
     if isinstance(answers, str):
         try:
             answers = json.loads(answers)
@@ -132,7 +147,16 @@ def submit_quiz_assessment(quiz_name: str, answers, course_name: str = None, stu
 
     quiz_doc = frappe.get_doc("Quiz", quiz_name)
     user_roles = frappe.get_roles()
-    is_staff = any(r in user_roles for r in ["Instructor", "Academics User", "Education Manager", "System Manager", "Administrator"])
+    is_staff = any(
+        r in user_roles
+        for r in [
+            "Instructor",
+            "Academics User",
+            "Education Manager",
+            "System Manager",
+            "Administrator",
+        ]
+    )
 
     if is_staff and not student:
         questions = quiz_doc.question or []
@@ -140,9 +164,11 @@ def submit_quiz_assessment(quiz_name: str, answers, course_name: str = None, stu
         total_q = len(questions)
         for idx, q_row in enumerate(questions):
             selected = answers.get(str(idx)) or answers.get(idx)
-            if q_row.question_link and frappe.db.exists("Question", q_row.question_link):
+            if q_row.question_link and frappe.db.exists(
+                "Question", q_row.question_link
+            ):
                 q_doc = frappe.get_doc("Question", q_row.question_link)
-                for opt in (q_doc.options or []):
+                for opt in q_doc.options or []:
                     if opt.option == selected and opt.is_correct:
                         correct_count += 1
                         break
@@ -165,20 +191,27 @@ def submit_quiz_assessment(quiz_name: str, answers, course_name: str = None, stu
 
     student_id = student or _resolve_portal_student()
     if not student_id:
-        frappe.throw(_("No student record is linked to your account."), frappe.PermissionError)
+        frappe.throw(
+            _("No student record is linked to your account."), frappe.PermissionError
+        )
     if not is_staff and student_id != _resolve_portal_student():
-        frappe.throw(_("Quizzes can only be submitted by the student themselves."), frappe.PermissionError)
+        frappe.throw(
+            _("Quizzes can only be submitted by the student themselves."),
+            frappe.PermissionError,
+        )
 
     existing_activities = frappe.get_all(
         "Quiz Activity",
         filters={"quiz": quiz_name, "student": student_id},
-        fields=["name", "score", "status", "creation"]
+        fields=["name", "score", "status", "creation"],
     )
     max_attempts = int(quiz_doc.max_attempts or 2)
     attempts_used = len(existing_activities)
 
     if attempts_used >= max_attempts:
-        frappe.throw(f"Maximum attempts ({max_attempts}) reached. You cannot retake this quiz.")
+        frappe.throw(
+            f"Maximum attempts ({max_attempts}) reached. You cannot retake this quiz."
+        )
 
     questions = quiz_doc.question or []
     correct_count = 0
@@ -190,16 +223,18 @@ def submit_quiz_assessment(quiz_name: str, answers, course_name: str = None, stu
         is_correct = False
         if q_row.question_link and frappe.db.exists("Question", q_row.question_link):
             q_doc = frappe.get_doc("Question", q_row.question_link)
-            for opt in (q_doc.options or []):
+            for opt in q_doc.options or []:
                 if opt.option == selected and opt.is_correct:
                     is_correct = True
                     correct_count += 1
                     break
-        result_rows.append({
-            "question": q_row.question_link or "",
-            "selected_option": selected,
-            "quiz_result": "Correct" if is_correct else "Wrong"
-        })
+        result_rows.append(
+            {
+                "question": q_row.question_link or "",
+                "selected_option": selected,
+                "quiz_result": "Correct" if is_correct else "Wrong",
+            }
+        )
 
     percent = round((correct_count / total_q) * 100) if total_q > 0 else 0
     passing_score = float(quiz_doc.passing_score or 70.0)
@@ -218,7 +253,6 @@ def submit_quiz_assessment(quiz_name: str, answers, course_name: str = None, stu
         qa.append("result", r)
 
     qa.insert(ignore_permissions=True)
-    frappe.db.commit()
 
     new_attempts_used = attempts_used + 1
     is_now_locked = new_attempts_used >= max_attempts
@@ -253,8 +287,18 @@ def get_quiz_student_submissions(quiz_name: str, course_name: str = None):
     activities = frappe.get_all(
         "Quiz Activity",
         filters=filters,
-        fields=["name", "student", "course", "quiz", "status", "score", "activity_date", "creation", "time_taken"],
-        order_by="creation asc"
+        fields=[
+            "name",
+            "student",
+            "course",
+            "quiz",
+            "status",
+            "score",
+            "activity_date",
+            "creation",
+            "time_taken",
+        ],
+        order_by="creation asc",
     )
 
     student_attempts = {}
@@ -267,30 +311,43 @@ def get_quiz_student_submissions(quiz_name: str, course_name: str = None):
 
         student_name = frappe.db.get_value("Student", stu_id, "student_name") or stu_id
         student_email = frappe.db.get_value("Student", stu_id, "student_email_id") or ""
-        enrollment = frappe.db.get_value("Program Enrollment", {"student": stu_id, "docstatus": 1}, ["program", "academic_year"], as_dict=True)
+        enrollment = frappe.db.get_value(
+            "Program Enrollment",
+            {"student": stu_id, "docstatus": 1},
+            ["program", "academic_year"],
+            as_dict=True,
+        )
 
         score_clean = str(act.score or "0").replace("%", "").strip()
         score_val = float(score_clean) if score_clean.replace(".", "").isdigit() else 0
 
-        enhanced.append({
-            "name": act.name,
-            "student": stu_id,
-            "student_name": student_name,
-            "student_email": student_email,
-            "program": enrollment.program if enrollment else "",
-            "score": f"{score_clean}%",
-            "score_num": score_val,
-            "status": act.status or ("Pass" if score_val >= 70 else "Fail"),
-            "attempt_number": attempt_num,
-            "activity_date": str(act.activity_date or act.creation),
-            "time_taken": act.time_taken,
-        })
+        enhanced.append(
+            {
+                "name": act.name,
+                "student": stu_id,
+                "student_name": student_name,
+                "student_email": student_email,
+                "program": enrollment.program if enrollment else "",
+                "score": f"{score_clean}%",
+                "score_num": score_val,
+                "status": act.status or ("Pass" if score_val >= 70 else "Fail"),
+                "attempt_number": attempt_num,
+                "activity_date": str(act.activity_date or act.creation),
+                "time_taken": act.time_taken,
+            }
+        )
 
     total_attempts = len(enhanced)
     unique_students = len(student_attempts)
     passed_count = sum(1 for s in enhanced if s["status"] == "Pass")
-    pass_rate = round((passed_count / total_attempts) * 100) if total_attempts > 0 else 0
-    avg_score = round(sum(s["score_num"] for s in enhanced) / total_attempts) if total_attempts > 0 else 0
+    pass_rate = (
+        round((passed_count / total_attempts) * 100) if total_attempts > 0 else 0
+    )
+    avg_score = (
+        round(sum(s["score_num"] for s in enhanced) / total_attempts)
+        if total_attempts > 0
+        else 0
+    )
 
     enhanced.sort(key=lambda x: x["activity_date"], reverse=True)
 
@@ -301,7 +358,7 @@ def get_quiz_student_submissions(quiz_name: str, course_name: str = None):
             "unique_students": unique_students,
             "pass_rate": pass_rate,
             "avg_score": avg_score,
-        }
+        },
     }
 
 
@@ -408,7 +465,10 @@ def get_grading_scale_intervals(
 @frappe.whitelist()
 def get_grade(grading_scale: str, percentage: float):
     require_login()
-    return _grade_for(percentage, _scale_intervals(_resolve_grading_scale(grading_scale=grading_scale)))
+    return _grade_for(
+        percentage,
+        _scale_intervals(_resolve_grading_scale(grading_scale=grading_scale)),
+    )
 
 
 @frappe.whitelist(methods=["POST"])
@@ -418,12 +478,21 @@ def mark_assessment_result(assessment_plan: str, scores: str):
     if not isinstance(student_score, dict) or not student_score.get("student"):
         frappe.throw(_("Student is required."))
     submitted = student_score.get("assessment_details") or {}
-    plan_criteria = {d.assessment_criteria: flt(d.maximum_score) for d in get_assessment_details(assessment_plan)}
+    plan_criteria = {
+        d.assessment_criteria: flt(d.maximum_score)
+        for d in get_assessment_details(assessment_plan)
+    }
     if not plan_criteria:
-        frappe.throw(_("Assessment Plan {0} has no assessment criteria.").format(assessment_plan))
+        frappe.throw(
+            _("Assessment Plan {0} has no assessment criteria.").format(assessment_plan)
+        )
     unknown = [c for c in submitted if c not in plan_criteria]
     if unknown:
-        frappe.throw(_("{0} is not a criterion of this Assessment Plan.").format(", ".join(unknown)))
+        frappe.throw(
+            _("{0} is not a criterion of this Assessment Plan.").format(
+                ", ".join(unknown)
+            )
+        )
     assessment_details = []
     for criteria, max_score in plan_criteria.items():
         raw = submitted.get(criteria)
@@ -436,7 +505,11 @@ def mark_assessment_result(assessment_plan: str, scores: str):
         if score < 0:
             frappe.throw(_("Score for {0} cannot be negative.").format(criteria))
         if score > max_score:
-            frappe.throw(_("Score for {0} cannot be greater than the maximum score {1}.").format(criteria, max_score))
+            frappe.throw(
+                _("Score for {0} cannot be greater than the maximum score {1}.").format(
+                    criteria, max_score
+                )
+            )
         assessment_details.append({"assessment_criteria": criteria, "score": score})
     assessment_result = get_assessment_result_doc(
         student_score["student"], assessment_plan
@@ -506,7 +579,9 @@ def get_assessment_result_doc(student, assessment_plan):
 
 
 @frappe.whitelist()
-def get_student_assessment_results(student=None, program=None, course=None):
+def get_student_assessment_results(
+    student: str | None = None, program: str | None = None, course: str | None = None
+):
     scope = resolve_student_scope(student)
     if scope is not None and not scope:
         return []
@@ -549,7 +624,10 @@ def get_student_assessment_results(student=None, program=None, course=None):
     details = frappe.get_all(
         "Assessment Result Detail",
         fields=["parent", "assessment_criteria", "maximum_score", "score", "grade"],
-        filters={"parent": ["in", [r.name for r in results]], "parenttype": "Assessment Result"},
+        filters={
+            "parent": ["in", [r.name for r in results]],
+            "parenttype": "Assessment Result",
+        },
         order_by="idx",
     )
     details_map = {}
@@ -571,7 +649,9 @@ def get_student_assessment_results(student=None, program=None, course=None):
     for r in results:
         r["details"] = details_map.get(r.name, [])
         max_score = flt(r.maximum_score)
-        r["percentage"] = round(flt(r.total_score) / max_score * 100, 1) if max_score > 0 else None
+        r["percentage"] = (
+            round(flt(r.total_score) / max_score * 100, 1) if max_score > 0 else None
+        )
         plan = plan_map.get(r.assessment_plan)
         r["assessment_name"] = plan.assessment_name if plan else None
         r["schedule_date"] = plan.schedule_date if plan else None
@@ -579,7 +659,9 @@ def get_student_assessment_results(student=None, program=None, course=None):
 
 
 @frappe.whitelist()
-def get_assessment_plans(student_group: str = None, course: str = None, program: str = None):
+def get_assessment_plans(
+    student_group: str = None, course: str = None, program: str = None
+):
     require_staff()
     filters = {"docstatus": ("!=", 2)}
     if student_group and student_group != "all":
@@ -636,23 +718,37 @@ def get_assessment_setup_metadata():
     if allowed is not None:
         member_groups = (
             frappe.get_all(
-                "Student Group Student", filters={"student": ["in", allowed]}, pluck="parent"
+                "Student Group Student",
+                filters={"student": ["in", allowed]},
+                pluck="parent",
             )
             if allowed
             else []
         )
         group_filters["name"] = ["in", list(set(member_groups)) or [""]]
 
-    programs = frappe.get_all("Program", fields=["name", "program_name"], order_by="name asc")
+    programs = frappe.get_all(
+        "Program", fields=["name", "program_name"], order_by="name asc"
+    )
     student_groups = frappe.get_all(
         "Student Group",
         filters=group_filters,
-        fields=["name", "student_group_name", "program", "academic_year", "academic_term", "group_based_on"],
+        fields=[
+            "name",
+            "student_group_name",
+            "program",
+            "academic_year",
+            "academic_term",
+            "group_based_on",
+        ],
         order_by="name asc",
         limit_page_length=500,
     )
     courses = frappe.get_all(
-        "Course", fields=["name", "course_name", "default_grading_scale"], order_by="name asc", limit_page_length=500
+        "Course",
+        fields=["name", "course_name", "default_grading_scale"],
+        order_by="name asc",
+        limit_page_length=500,
     )
     assessment_groups = frappe.get_all(
         "Assessment Group",
@@ -664,7 +760,9 @@ def get_assessment_setup_metadata():
         "Grading Scale", filters={"docstatus": 1}, fields=["name"], order_by="name asc"
     ) or frappe.get_all("Grading Scale", fields=["name"], order_by="name asc")
     criteria = frappe.get_all(
-        "Assessment Criteria", fields=["name", "assessment_criteria"], order_by="name asc"
+        "Assessment Criteria",
+        fields=["name", "assessment_criteria"],
+        order_by="name asc",
     )
     academic_years = frappe.get_all(
         "Academic Year",
@@ -673,7 +771,13 @@ def get_assessment_setup_metadata():
     )
     academic_terms = frappe.get_all(
         "Academic Term",
-        fields=["name", "academic_year", "term_name", "term_start_date", "term_end_date"],
+        fields=[
+            "name",
+            "academic_year",
+            "term_name",
+            "term_start_date",
+            "term_end_date",
+        ],
         order_by="term_start_date desc",
     )
 
@@ -686,8 +790,12 @@ def get_assessment_setup_metadata():
         "criteria": criteria,
         "academic_years": academic_years,
         "academic_terms": academic_terms,
-        "current_academic_year": frappe.db.get_single_value("Education Settings", "current_academic_year"),
-        "current_academic_term": frappe.db.get_single_value("Education Settings", "current_academic_term"),
+        "current_academic_year": frappe.db.get_single_value(
+            "Education Settings", "current_academic_year"
+        ),
+        "current_academic_term": frappe.db.get_single_value(
+            "Education Settings", "current_academic_term"
+        ),
     }
 
 
@@ -713,26 +821,43 @@ def create_assessment_plan(
         frappe.throw(_("Please select a valid Course."))
 
     group = frappe.db.get_value(
-        "Student Group", student_group, ["program", "academic_year", "academic_term"], as_dict=True
+        "Student Group",
+        student_group,
+        ["program", "academic_year", "academic_term"],
+        as_dict=True,
     )
     program = program or group.program
     academic_year = group.academic_year or frappe.db.get_single_value(
         "Education Settings", "current_academic_year"
     )
 
-    grading_scale = _resolve_grading_scale(grading_scale=grading_scale, course=course, program=program)
+    grading_scale = _resolve_grading_scale(
+        grading_scale=grading_scale, course=course, program=program
+    )
     if not grading_scale:
-        frappe.throw(_("No Grading Scale is configured. Please create a Grading Scale first."))
+        frappe.throw(
+            _("No Grading Scale is configured. Please create a Grading Scale first.")
+        )
 
     if not assessment_group:
         leaf_groups = frappe.get_all(
-            "Assessment Group", filters={"is_group": 0}, pluck="name", order_by="creation asc", limit=1
+            "Assessment Group",
+            filters={"is_group": 0},
+            pluck="name",
+            order_by="creation asc",
+            limit=1,
         )
         if not leaf_groups:
-            frappe.throw(_("No Assessment Group is configured. Please create one first."))
+            frappe.throw(
+                _("No Assessment Group is configured. Please create one first.")
+            )
         assessment_group = leaf_groups[0]
 
-    parsed_criteria = json.loads(criteria) if isinstance(criteria, str) and criteria else (criteria or [])
+    parsed_criteria = (
+        json.loads(criteria)
+        if isinstance(criteria, str) and criteria
+        else (criteria or [])
+    )
     if not parsed_criteria:
         frappe.throw(_("Please select at least one Assessment Criteria."))
 
@@ -755,10 +880,15 @@ def create_assessment_plan(
     for c in parsed_criteria:
         crit_name = c.get("assessment_criteria") or c.get("name")
         if not crit_name or not frappe.db.exists("Assessment Criteria", crit_name):
-            frappe.throw(_("Assessment Criteria {0} does not exist.").format(crit_name or ""))
+            frappe.throw(
+                _("Assessment Criteria {0} does not exist.").format(crit_name or "")
+            )
         score = flt(c.get("maximum_score")) or 100.0
         total_max_score += score
-        doc.append("assessment_criteria", {"assessment_criteria": crit_name, "maximum_score": score})
+        doc.append(
+            "assessment_criteria",
+            {"assessment_criteria": crit_name, "maximum_score": score},
+        )
 
     doc.maximum_assessment_score = total_max_score
     doc.insert(ignore_permissions=True)
@@ -804,19 +934,29 @@ def get_student_report_card_data(
 
     prog_name = program or (enrollment.program if enrollment else "")
     explicit_year = bool(academic_year)
-    acad_yr = academic_year or (enrollment.academic_year if enrollment else "") or (
-        frappe.db.get_single_value("Education Settings", "current_academic_year") or ""
+    acad_yr = (
+        academic_year
+        or (enrollment.academic_year if enrollment else "")
+        or (
+            frappe.db.get_single_value("Education Settings", "current_academic_year")
+            or ""
+        )
     )
 
     # Student group & roll number
     if not student_group:
         sg_filters = {"student": student, "active": 1}
-        member_of = frappe.get_all("Student Group Student", filters=sg_filters, pluck="parent")
+        member_of = frappe.get_all(
+            "Student Group Student", filters=sg_filters, pluck="parent"
+        )
         if member_of:
             # Prefer the class/section (batch-based) group over course or activity groups
             candidates = frappe.get_all(
                 "Student Group",
-                filters={"name": ["in", member_of], **({"program": prog_name} if prog_name else {})},
+                filters={
+                    "name": ["in", member_of],
+                    **({"program": prog_name} if prog_name else {}),
+                },
                 fields=["name", "group_based_on"],
                 order_by="name asc",
             )
@@ -825,9 +965,14 @@ def get_student_report_card_data(
             student_group = candidates[0] if candidates else member_of[0]
     roll_no = ""
     if student_group:
-        roll_no = frappe.db.get_value(
-            "Student Group Student", {"parent": student_group, "student": student}, "group_roll_number"
-        ) or ""
+        roll_no = (
+            frappe.db.get_value(
+                "Student Group Student",
+                {"parent": student_group, "student": student},
+                "group_roll_number",
+            )
+            or ""
+        )
 
     class_teacher = ""
     if student_group:
@@ -853,7 +998,10 @@ def get_student_report_card_data(
     )
     if guardians:
         g_doc = frappe.db.get_value(
-            "Guardian", guardians[0].guardian, ["guardian_name", "mobile_number"], as_dict=True
+            "Guardian",
+            guardians[0].guardian,
+            ["guardian_name", "mobile_number"],
+            as_dict=True,
         )
         if g_doc:
             guardian_name = g_doc.guardian_name or guardians[0].guardian_name or ""
@@ -881,7 +1029,10 @@ def get_student_report_card_data(
         "academic_year",
     ]
     results = frappe.get_all(
-        "Assessment Result", filters=results_filters, fields=result_fields, order_by="course asc"
+        "Assessment Result",
+        filters=results_filters,
+        fields=result_fields,
+        order_by="course asc",
     )
 
     if not results and acad_yr and not explicit_year:
@@ -889,7 +1040,10 @@ def get_student_report_card_data(
         # enrollment default; report the year the results actually belong to.
         fallback = {k: v for k, v in results_filters.items() if k != "academic_year"}
         results = frappe.get_all(
-            "Assessment Result", filters=fallback, fields=result_fields, order_by="academic_year desc, course asc"
+            "Assessment Result",
+            filters=fallback,
+            fields=result_fields,
+            order_by="academic_year desc, course asc",
         )
         if results and results[0].get("academic_year"):
             acad_yr = results[0]["academic_year"]
@@ -899,7 +1053,9 @@ def get_student_report_card_data(
 
     scale_name = _resolve_grading_scale(
         grading_scale=next((r.grading_scale for r in results if r.grading_scale), None),
-        assessment_plan=next((r.assessment_plan for r in results if r.assessment_plan), None),
+        assessment_plan=next(
+            (r.assessment_plan for r in results if r.assessment_plan), None
+        ),
         program=prog_name,
     )
     intervals = _scale_intervals(scale_name)
@@ -912,7 +1068,9 @@ def get_student_report_card_data(
         max_score = flt(r.maximum_score)
         if max_score <= 0 and r.assessment_plan:
             max_score = flt(
-                frappe.db.get_value("Assessment Plan", r.assessment_plan, "maximum_assessment_score")
+                frappe.db.get_value(
+                    "Assessment Plan", r.assessment_plan, "maximum_assessment_score"
+                )
             )
         score = flt(r.total_score)
         pct = round((score / max_score) * 100) if max_score > 0 else 0
@@ -926,28 +1084,38 @@ def get_student_report_card_data(
             fields=["assessment_criteria", "maximum_score", "score", "grade"],
             order_by="idx asc",
         )
-        course_records.append({
-            "name": r.name,
-            "course": r.course,
-            "assessment_group": r.assessment_group,
-            "total_score": score,
-            "maximum_score": max_score,
-            "percentage": pct,
-            "grade": grade,
-            "grade_description": description_map.get(grade, ""),
-            "comment": r.comment or "",
-            "details": details,
-        })
+        course_records.append(
+            {
+                "name": r.name,
+                "course": r.course,
+                "assessment_group": r.assessment_group,
+                "total_score": score,
+                "maximum_score": max_score,
+                "percentage": pct,
+                "grade": grade,
+                "grade_description": description_map.get(grade, ""),
+                "comment": r.comment or "",
+                "details": details,
+            }
+        )
 
-    overall_percentage = round((total_obtained / total_max) * 100, 1) if total_max > 0 else None
-    overall_grade = _grade_for(overall_percentage, intervals) if overall_percentage is not None else ""
+    overall_percentage = (
+        round((total_obtained / total_max) * 100, 1) if total_max > 0 else None
+    )
+    overall_grade = (
+        _grade_for(overall_percentage, intervals)
+        if overall_percentage is not None
+        else ""
+    )
     pass_pct = _passing_threshold(intervals)
     if overall_percentage is None:
         result_status = ""
     elif pass_pct is None:
         result_status = ""
     else:
-        result_status = _("Pass") if overall_percentage >= pass_pct else _("Needs Improvement")
+        result_status = (
+            _("Pass") if overall_percentage >= pass_pct else _("Needs Improvement")
+        )
 
     school = _school_info()
     school["academic_year"] = acad_yr
@@ -1029,7 +1197,11 @@ def _most_used_grading_scale(filters):
 
 
 def _resolve_grading_scale(
-    grading_scale=None, assessment_plan=None, assessment_result=None, course=None, program=None
+    grading_scale=None,
+    assessment_plan=None,
+    assessment_result=None,
+    course=None,
+    program=None,
 ):
     """Resolve the real Grading Scale that applies to the given context."""
     if grading_scale and frappe.db.exists("Grading Scale", grading_scale):
@@ -1038,11 +1210,15 @@ def _resolve_grading_scale(
     scale_name = None
     if assessment_plan:
         plan = frappe.db.get_value(
-            "Assessment Plan", assessment_plan, ["grading_scale", "course"], as_dict=True
+            "Assessment Plan",
+            assessment_plan,
+            ["grading_scale", "course"],
+            as_dict=True,
         )
         if plan:
             scale_name = plan.grading_scale or (
-                plan.course and frappe.db.get_value("Course", plan.course, "default_grading_scale")
+                plan.course
+                and frappe.db.get_value("Course", plan.course, "default_grading_scale")
             )
     elif assessment_result:
         res = frappe.db.get_value(
@@ -1054,25 +1230,34 @@ def _resolve_grading_scale(
         if res:
             scale_name = res.grading_scale
             if not scale_name and res.assessment_plan:
-                scale_name = frappe.db.get_value("Assessment Plan", res.assessment_plan, "grading_scale")
+                scale_name = frappe.db.get_value(
+                    "Assessment Plan", res.assessment_plan, "grading_scale"
+                )
             if not scale_name and res.course:
-                scale_name = frappe.db.get_value("Course", res.course, "default_grading_scale")
+                scale_name = frappe.db.get_value(
+                    "Course", res.course, "default_grading_scale"
+                )
 
     if not scale_name and course:
-        scale_name = frappe.db.get_value("Course", course, "default_grading_scale") or _most_used_grading_scale(
-            {"course": course}
-        )
+        scale_name = frappe.db.get_value(
+            "Course", course, "default_grading_scale"
+        ) or _most_used_grading_scale({"course": course})
 
     if not scale_name and program:
         scale_name = _most_used_grading_scale({"program": program})
         if not scale_name:
             program_courses = frappe.get_all(
-                "Program Course", filters={"parent": program, "parenttype": "Program"}, pluck="course"
+                "Program Course",
+                filters={"parent": program, "parenttype": "Program"},
+                pluck="course",
             )
             if program_courses:
                 defaults = frappe.get_all(
                     "Course",
-                    filters={"name": ["in", program_courses], "default_grading_scale": ["is", "set"]},
+                    filters={
+                        "name": ["in", program_courses],
+                        "default_grading_scale": ["is", "set"],
+                    },
                     pluck="default_grading_scale",
                     limit=1,
                 )
@@ -1083,7 +1268,11 @@ def _resolve_grading_scale(
 
     if not scale_name:
         submitted = frappe.get_all(
-            "Grading Scale", filters={"docstatus": 1}, pluck="name", order_by="creation asc", limit=1
+            "Grading Scale",
+            filters={"docstatus": 1},
+            pluck="name",
+            order_by="creation asc",
+            limit=1,
         )
         scale_name = submitted[0] if submitted else None
 
@@ -1165,7 +1354,9 @@ def _attendance_summary(student, academic_year=None, academic_term=None):
 
 
 def _school_info():
-    name = frappe.db.get_single_value("Education Settings", "school_college_name_abbreviation")
+    name = frappe.db.get_single_value(
+        "Education Settings", "school_college_name_abbreviation"
+    )
     company = frappe.defaults.get_global_default("company")
     if not name:
         name = company
@@ -1179,11 +1370,21 @@ def _school_info():
         )
         if address_name:
             addr = frappe.db.get_value(
-                "Address", address_name, ["address_line1", "city", "state"], as_dict=True
+                "Address",
+                address_name,
+                ["address_line1", "city", "state"],
+                as_dict=True,
             )
             if addr:
-                address = ", ".join([p for p in (addr.address_line1, addr.city, addr.state) if p])
-    return {"name": name or "", "logo": logo or "", "company": company or "", "address": address}
+                address = ", ".join(
+                    [p for p in (addr.address_line1, addr.city, addr.state) if p]
+                )
+    return {
+        "name": name or "",
+        "logo": logo or "",
+        "company": company or "",
+        "address": address,
+    }
 
 
 @frappe.whitelist()
@@ -1193,11 +1394,20 @@ def get_reports_tools_summary():
     current = today()
     return {
         "assessment_plans": frappe.db.count("Assessment Plan", {"docstatus": 1}),
-        "assessment_results_submitted": frappe.db.count("Assessment Result", {"docstatus": 1}),
-        "assessment_results_draft": frappe.db.count("Assessment Result", {"docstatus": 0}),
+        "assessment_results_submitted": frappe.db.count(
+            "Assessment Result", {"docstatus": 1}
+        ),
+        "assessment_results_draft": frappe.db.count(
+            "Assessment Result", {"docstatus": 0}
+        ),
         "student_groups": frappe.db.count("Student Group", {"disabled": 0}),
         "students_with_results": len(
-            frappe.get_all("Assessment Result", filters={"docstatus": 1}, pluck="student", distinct=True)
+            frappe.get_all(
+                "Assessment Result",
+                filters={"docstatus": 1},
+                pluck="student",
+                distinct=True,
+            )
         ),
         "attendance_marked_today": frappe.db.count(
             "Student Attendance", {"date": current, "docstatus": 1}
@@ -1205,14 +1415,22 @@ def get_reports_tools_summary():
         "attendance_groups_today": len(
             frappe.get_all(
                 "Student Attendance",
-                filters={"date": current, "docstatus": 1, "student_group": ["is", "set"]},
+                filters={
+                    "date": current,
+                    "docstatus": 1,
+                    "student_group": ["is", "set"],
+                },
                 pluck="student_group",
                 distinct=True,
             )
         ),
-        "pending_leave_applications": frappe.db.count("Student Leave Application", {"docstatus": 0}),
+        "pending_leave_applications": frappe.db.count(
+            "Student Leave Application", {"docstatus": 0}
+        ),
         "program_enrollments": frappe.db.count("Program Enrollment", {"docstatus": 1}),
-        "approved_applicants": frappe.db.count("Student Applicant", {"application_status": "Approved"}),
+        "approved_applicants": frappe.db.count(
+            "Student Applicant", {"application_status": "Approved"}
+        ),
         "upcoming_course_schedules": frappe.db.count(
             "Course Schedule", {"schedule_date": [">=", current]}
         ),

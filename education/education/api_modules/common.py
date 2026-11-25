@@ -39,6 +39,7 @@ PROGRAM_ENROLLMENT_FIELDS = [
 # Helper & Security Utilities
 # ==============================================================================
 
+
 def _resolve_portal_student(student=None):
     if student:
         return student
@@ -187,14 +188,20 @@ def _resolve_default_program(student, programs):
     active_enrollment = get_current_enrollment(student)
     if active_enrollment:
         for p in programs:
-            if p.get("program_enrollment") == active_enrollment.get("program_enrollment"):
+            if p.get("program_enrollment") == active_enrollment.get(
+                "program_enrollment"
+            ):
                 return p.get("program")
-            if p.get("program") == active_enrollment.get("program") and p.get("academic_year") == active_enrollment.get("academic_year"):
+            if p.get("program") == active_enrollment.get("program") and p.get(
+                "academic_year"
+            ) == active_enrollment.get("academic_year"):
                 return p.get("program")
     return programs[0]["program"]
 
 
-def _get_program_enrollment(student, program=None, academic_year=None, program_enrollment=None):
+def _get_program_enrollment(
+    student, program=None, academic_year=None, program_enrollment=None
+):
     filters = {"student": student, "docstatus": ["<", 2]}
     if program_enrollment:
         filters["name"] = program_enrollment
@@ -212,7 +219,6 @@ def _get_program_enrollment(student, program=None, academic_year=None, program_e
         limit=1,
     )
     return enrollments[0] if enrollments else None
-
 
 
 @frappe.whitelist(methods=["POST"])
@@ -277,7 +283,9 @@ def get_instructor_for_user(user=None):
     if frappe.db.exists("DocType", "Employee"):
         employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
         if employee:
-            instructor = frappe.db.get_value("Instructor", {"employee": employee}, "name")
+            instructor = frappe.db.get_value(
+                "Instructor", {"employee": employee}, "name"
+            )
             if instructor:
                 return instructor
 
@@ -315,7 +323,9 @@ def _dashboard_scope(student=None):
 
     if student:
         if not frappe.db.exists("Student", student):
-            frappe.throw(_("Student {0} not found").format(student), frappe.DoesNotExistError)
+            frappe.throw(
+                _("Student {0} not found").format(student), frappe.DoesNotExistError
+            )
         check_permission(student, "dashboard")
         return "student", student
 
@@ -415,7 +425,12 @@ def _format_sessions(rows):
     rooms = list({r.room for r in rows if r.get("room")})
     if rooms:
         room_names = dict(
-            frappe.get_all("Room", filters={"name": ["in", rooms]}, fields=["name", "room_name"], as_list=True)
+            frappe.get_all(
+                "Room",
+                filters={"name": ["in", rooms]},
+                fields=["name", "room_name"],
+                as_list=True,
+            )
         )
     out = []
     for r in rows:
@@ -461,12 +476,14 @@ def _get_next_session(filters):
 
 
 def _sum_field(doctype, field, filters):
-    rows = frappe.get_all(doctype, filters=filters, fields=[{"SUM": field, "as": "total"}])
+    rows = frappe.get_all(
+        doctype, filters=filters, fields=[{"SUM": field, "as": "total"}]
+    )
     return frappe.utils.flt(rows[0].get("total")) if rows else 0.0
 
 
 @frappe.whitelist()
-def get_dashboard_stats(student=None, program=None):
+def get_dashboard_stats(student: str | None = None, program: str | None = None):
     """KPI cards for the portal dashboard: attendance, curriculum, next period and fees."""
     scope, student = _dashboard_scope(student)
     out = {
@@ -476,7 +493,12 @@ def get_dashboard_stats(student=None, program=None):
         "attendance": {"present": 0, "total": 0, "rate": None},
         "course_count": 0,
         "next_class": None,
-        "fees": {"pending": 0.0, "open_invoices": 0, "currency": None, "currency_symbol": None},
+        "fees": {
+            "pending": 0.0,
+            "open_invoices": 0,
+            "currency": None,
+            "currency_symbol": None,
+        },
     }
     if scope == "none":
         return out
@@ -523,12 +545,17 @@ def get_dashboard_stats(student=None, program=None):
         base = {"student": student} if student else {"student": ["is", "set"]}
         submitted = {**base, "docstatus": 1, "outstanding_amount": [">", 0]}
         drafts = {**base, "docstatus": 0}
-        pending = _sum_field("Sales Invoice", "outstanding_amount", submitted) + _sum_field(
-            "Sales Invoice", "grand_total", drafts
+        pending = _sum_field(
+            "Sales Invoice", "outstanding_amount", submitted
+        ) + _sum_field("Sales Invoice", "grand_total", drafts)
+        open_count = frappe.db.count("Sales Invoice", submitted) + frappe.db.count(
+            "Sales Invoice", drafts
         )
-        open_count = frappe.db.count("Sales Invoice", submitted) + frappe.db.count("Sales Invoice", drafts)
         currency = frappe.db.get_value(
-            "Sales Invoice", {**base, "docstatus": ["<", 2]}, "currency", order_by="posting_date desc"
+            "Sales Invoice",
+            {**base, "docstatus": ["<", 2]},
+            "currency",
+            order_by="posting_date desc",
         ) or frappe.defaults.get_global_default("currency")
         out["fees"] = {
             "pending": pending,
@@ -541,12 +568,18 @@ def get_dashboard_stats(student=None, program=None):
 
 
 @frappe.whitelist()
-def get_dashboard_schedule(student=None, limit=3):
+def get_dashboard_schedule(student: str | None = None, limit: int | str | None = 3):
     """Today's sessions for the scope; falls back to the next upcoming sessions when today is free."""
     scope, student = _dashboard_scope(student)
     limit = max(1, min(frappe.utils.cint(limit) or 3, 10))
     today = frappe.utils.today()
-    out = {"scope": scope, "student": student, "date": today, "is_today": True, "sessions": []}
+    out = {
+        "scope": scope,
+        "student": student,
+        "date": today,
+        "is_today": True,
+        "sessions": [],
+    }
 
     filters = _schedule_filters_for_scope(scope, student)
     if filters is None:
@@ -573,7 +606,7 @@ def get_dashboard_schedule(student=None, limit=3):
 
 
 @frappe.whitelist()
-def get_recent_assessments(student=None, limit=4):
+def get_recent_assessments(student: str | None = None, limit: int | str | None = 4):
     """Latest submitted Assessment Results plus an aggregate score summary for the scope."""
     scope, student = _dashboard_scope(student)
     limit = max(1, min(frappe.utils.cint(limit) or 4, 20))
@@ -581,7 +614,12 @@ def get_recent_assessments(student=None, limit=4):
         "scope": scope,
         "student": student,
         "results": [],
-        "summary": {"count": 0, "total_score": 0.0, "maximum_score": 0.0, "percentage": None},
+        "summary": {
+            "count": 0,
+            "total_score": 0.0,
+            "maximum_score": 0.0,
+            "percentage": None,
+        },
     }
     if scope == "none":
         return out
@@ -641,7 +679,9 @@ def _clean_text(html, length=400):
 
 
 @frappe.whitelist()
-def get_dashboard_announcements(student=None, limit=20):
+def get_dashboard_announcements(
+    student: str | None = None, limit: int | str | None = 20
+):
     """Notice board: public Notes (circulars), the scoped student's Student Logs and the
     current user's own Notification Logs."""
     scope, student = _dashboard_scope(student)
@@ -681,7 +721,15 @@ def get_dashboard_announcements(student=None, limit=20):
         logs = frappe.get_all(
             "Student Log",
             filters={"student": student},
-            fields=["name", "type", "log", "date", "academic_term", "program", "creation"],
+            fields=[
+                "name",
+                "type",
+                "log",
+                "date",
+                "academic_term",
+                "program",
+                "creation",
+            ],
             order_by="date desc, creation desc",
             limit=limit,
         )
@@ -691,7 +739,9 @@ def get_dashboard_announcements(student=None, limit=20):
                 {
                     "id": f"log-{log.name}",
                     "source": "Student Log",
-                    "title": f"{log_type}: {log.academic_term or log.program or ''}".rstrip(": "),
+                    "title": f"{log_type}: {log.academic_term or log.program or ''}".rstrip(
+                        ": "
+                    ),
                     "content": _clean_text(log.log),
                     "date": str(log.date or log.creation).split(" ")[0],
                     "category": log_type,
@@ -726,6 +776,12 @@ def get_dashboard_announcements(student=None, limit=20):
         )
 
     # pinned first, then newest first
-    pinned = sorted([i for i in items if i["pinned"]], key=lambda i: i["date"] or "", reverse=True)
-    others = sorted([i for i in items if not i["pinned"]], key=lambda i: i["date"] or "", reverse=True)
+    pinned = sorted(
+        [i for i in items if i["pinned"]], key=lambda i: i["date"] or "", reverse=True
+    )
+    others = sorted(
+        [i for i in items if not i["pinned"]],
+        key=lambda i: i["date"] or "",
+        reverse=True,
+    )
     return {"scope": scope, "student": student, "items": (pinned + others)[:limit]}

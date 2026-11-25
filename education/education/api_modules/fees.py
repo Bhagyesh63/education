@@ -52,7 +52,9 @@ def _display_status(inv):
         return "Draft"
     if flt(inv.outstanding_amount) <= 0:
         return "Paid"
-    if inv.status == "Overdue" or (inv.due_date and getdate(inv.due_date) < getdate(today())):
+    if inv.status == "Overdue" or (
+        inv.due_date and getdate(inv.due_date) < getdate(today())
+    ):
         return "Overdue"
     return "Unpaid" if inv.status in ("Unpaid", "Submitted", None, "") else inv.status
 
@@ -99,7 +101,9 @@ def collect_fees(fees: str, amt: float):
     paid_amount = flt(amt) + flt(frappe.db.get_value("Fees", fees, "paid_amount"))
     total_amount = flt(frappe.db.get_value("Fees", fees, "total_amount"))
     frappe.db.set_value("Fees", fees, "paid_amount", paid_amount)
-    frappe.db.set_value("Fees", fees, "outstanding_amount", (total_amount - paid_amount))
+    frappe.db.set_value(
+        "Fees", fees, "outstanding_amount", (total_amount - paid_amount)
+    )
     return paid_amount
 
 
@@ -126,7 +130,10 @@ def get_student_invoices(student: str = None):
 
     student_names = dict(
         frappe.get_all(
-            "Student", filters={"name": ["in", scope]}, fields=["name", "student_name"], as_list=True
+            "Student",
+            filters={"name": ["in", scope]},
+            fields=["name", "student_name"],
+            as_list=True,
         )
     )
     enr_map = _latest_enrollment_map(scope)
@@ -152,10 +159,16 @@ def get_student_invoices(student: str = None):
     invoices = []
     for si in sales_invoice_list:
         inv_status = _display_status(si)
-        out_amt = flt(si.grand_total) if si.docstatus == 0 else max(flt(si.outstanding_amount), 0)
+        out_amt = (
+            flt(si.grand_total)
+            if si.docstatus == 0
+            else max(flt(si.outstanding_amount), 0)
+        )
         currency = si.currency or default_currency
         symbol = get_currency_symbol(currency) if currency else default_symbol
-        prog = get_program_from_fee_schedule(si.fee_schedule) if si.fee_schedule else None
+        prog = (
+            get_program_from_fee_schedule(si.fee_schedule) if si.fee_schedule else None
+        )
         if not prog:
             prog = (enr_map.get(si.student) or {}).get("program")
 
@@ -178,7 +191,9 @@ def get_student_invoices(student: str = None):
             "amount": f"{symbol} {out_amt if inv_status != 'Paid' else flt(si.grand_total)}",
         }
         if inv_status == "Paid":
-            pay_date = get_posting_date_from_payment_entry_against_sales_invoice(si.name)
+            pay_date = get_posting_date_from_payment_entry_against_sales_invoice(
+                si.name
+            )
             row["payment_date"] = str(pay_date) if pay_date else ""
             row["due_date"] = str(si.due_date) if si.due_date else ""
         else:
@@ -203,30 +218,39 @@ def get_student_invoices(student: str = None):
         order_by="posting_date desc",
     )
     for fee in fees_list:
-        fee_status = "Paid" if flt(fee.outstanding_amount) <= 0 else (
-            "Overdue" if fee.due_date and getdate(fee.due_date) < getdate(today()) else "Unpaid"
+        fee_status = (
+            "Paid"
+            if flt(fee.outstanding_amount) <= 0
+            else (
+                "Overdue"
+                if fee.due_date and getdate(fee.due_date) < getdate(today())
+                else "Unpaid"
+            )
         )
         currency = fee.currency or default_currency
         symbol = get_currency_symbol(currency) if currency else default_symbol
-        invoices.append({
-            "name": fee.name,
-            "invoice": fee.name,
-            "doctype": "Fees",
-            "student": fee.student,
-            "student_name": student_names.get(fee.student, fee.student),
-            "status": fee_status,
-            "docstatus": 1,
-            "program": fee.program or "",
-            "currency": currency,
-            "currency_symbol": symbol,
-            "grand_total": flt(fee.grand_total),
-            "outstanding_amount": max(flt(fee.outstanding_amount), 0),
-            "paid_amount": flt(fee.grand_total) - max(flt(fee.outstanding_amount), 0),
-            "amount": f"{symbol} {fee.grand_total if fee_status == 'Paid' else fee.outstanding_amount}",
-            "posting_date": str(fee.posting_date) if fee.posting_date else "",
-            "payment_date": "",
-            "due_date": str(fee.due_date) if fee.due_date else "",
-        })
+        invoices.append(
+            {
+                "name": fee.name,
+                "invoice": fee.name,
+                "doctype": "Fees",
+                "student": fee.student,
+                "student_name": student_names.get(fee.student, fee.student),
+                "status": fee_status,
+                "docstatus": 1,
+                "program": fee.program or "",
+                "currency": currency,
+                "currency_symbol": symbol,
+                "grand_total": flt(fee.grand_total),
+                "outstanding_amount": max(flt(fee.outstanding_amount), 0),
+                "paid_amount": flt(fee.grand_total)
+                - max(flt(fee.outstanding_amount), 0),
+                "amount": f"{symbol} {fee.grand_total if fee_status == 'Paid' else fee.outstanding_amount}",
+                "posting_date": str(fee.posting_date) if fee.posting_date else "",
+                "payment_date": "",
+                "due_date": str(fee.due_date) if fee.due_date else "",
+            }
+        )
 
     billed = sum(i["grand_total"] for i in invoices if i["docstatus"] == 1)
     outstanding = sum(i["outstanding_amount"] for i in invoices if i["docstatus"] == 1)
@@ -267,7 +291,9 @@ def _invoices_for_program(program=None):
         prog = None
         if inv.fee_schedule:
             if inv.fee_schedule not in schedule_programs:
-                schedule_programs[inv.fee_schedule] = get_program_from_fee_schedule(inv.fee_schedule)
+                schedule_programs[inv.fee_schedule] = get_program_from_fee_schedule(
+                    inv.fee_schedule
+                )
             prog = schedule_programs[inv.fee_schedule]
         enr = enr_map.get(inv.student) or {}
         inv["program"] = prog or enr.get("program") or ""
@@ -299,7 +325,9 @@ def get_fee_dashboard_summary(program: str = None):
 
     currency, symbol = _default_currency()
     collection_rate = (
-        round(totals["collected"] / totals["billed"] * 100, 1) if totals["billed"] > 0 else 0.0
+        round(totals["collected"] / totals["billed"] * 100, 1)
+        if totals["billed"] > 0
+        else 0.0
     )
     return {
         "total_billed": totals["billed"],
@@ -319,7 +347,9 @@ def get_fee_dashboard_summary(program: str = None):
 
 
 @frappe.whitelist()
-def get_all_invoices_for_admin(program: str = None, status: str = None, search: str = None):
+def get_all_invoices_for_admin(
+    program: str = None, status: str = None, search: str = None
+):
     """Detailed invoice list with student metadata (staff only)."""
     require_roles(FEE_VIEW_ROLES, _("Only school staff can view the fee ledger."))
     invoices = _invoices_for_program(program)
@@ -348,29 +378,39 @@ def get_all_invoices_for_admin(program: str = None, status: str = None, search: 
         stu_info = student_map.get(inv.student) or {}
         stu_name = stu_info.get("student_name") or inv.customer or inv.student
         if q and not (
-            q in inv.name.lower() or q in (stu_name or "").lower() or q in (inv.student or "").lower()
+            q in inv.name.lower()
+            or q in (stu_name or "").lower()
+            or q in (inv.student or "").lower()
         ):
             continue
 
-        result.append({
-            "name": inv.name,
-            "invoice": inv.name,
-            "student": inv.student,
-            "student_name": stu_name,
-            "customer": inv.customer,
-            "program": inv.program,
-            "batch": inv.batch,
-            "grand_total": flt(inv.grand_total),
-            "outstanding_amount": flt(inv.grand_total)
-            if inv.docstatus == 0
-            else max(flt(inv.outstanding_amount), 0),
-            "status": inv.display_status,
-            "docstatus": inv.docstatus,
-            "posting_date": str(inv.posting_date) if inv.posting_date else "",
-            "due_date": str(inv.due_date) if inv.due_date else "",
-            "currency": inv.currency,
-            "currency_symbol": get_currency_symbol(inv.currency) if inv.currency else default_symbol,
-        })
+        result.append(
+            {
+                "name": inv.name,
+                "invoice": inv.name,
+                "student": inv.student,
+                "student_name": stu_name,
+                "customer": inv.customer,
+                "program": inv.program,
+                "batch": inv.batch,
+                "grand_total": flt(inv.grand_total),
+                "outstanding_amount": (
+                    flt(inv.grand_total)
+                    if inv.docstatus == 0
+                    else max(flt(inv.outstanding_amount), 0)
+                ),
+                "status": inv.display_status,
+                "docstatus": inv.docstatus,
+                "posting_date": str(inv.posting_date) if inv.posting_date else "",
+                "due_date": str(inv.due_date) if inv.due_date else "",
+                "currency": inv.currency,
+                "currency_symbol": (
+                    get_currency_symbol(inv.currency)
+                    if inv.currency
+                    else default_symbol
+                ),
+            }
+        )
 
     result.sort(key=lambda r: (r["docstatus"] != 0, r["status"] == "Paid"))
     print_format = get_fees_print_format() or "Standard"
@@ -446,9 +486,9 @@ def create_payment_entry(
         pe.paid_to = frappe.db.get_value("Company", inv.company, "default_cash_account")
     if not pe.paid_to:
         frappe.throw(
-            _("No account is configured for Mode of Payment {0} in company {1}.").format(
-                mode_of_payment, inv.company
-            )
+            _(
+                "No account is configured for Mode of Payment {0} in company {1}."
+            ).format(mode_of_payment, inv.company)
         )
 
     if amt > 0:

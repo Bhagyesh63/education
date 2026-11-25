@@ -11,7 +11,6 @@ from education.education.api_modules.common import (
     is_guardian_of,
 )
 
-
 # ==============================================================================
 # Access helpers (shared with api_modules.schedule)
 # ==============================================================================
@@ -45,7 +44,9 @@ def _require_staff(action=None):
     _require_login()
     if not _is_staff():
         raise frappe.PermissionError(
-            _("You are not permitted to {0}.").format(action or _("perform this action"))
+            _("You are not permitted to {0}.").format(
+                action or _("perform this action")
+            )
         )
 
 
@@ -54,14 +55,24 @@ def _get_user_instructors(user=None):
     user = user or frappe.session.user
     if not user or user in ("Guest", "Administrator"):
         return []
-    employees = frappe.get_all("Employee", filters={"user_id": user}, pluck="name") if frappe.db.exists("DocType", "Employee") else []
+    employees = (
+        frappe.get_all("Employee", filters={"user_id": user}, pluck="name")
+        if frappe.db.exists("DocType", "Employee")
+        else []
+    )
     instructors = []
     if employees:
-        instructors = frappe.get_all("Instructor", filters={"employee": ["in", employees]}, pluck="name")
-    if not instructors and {"Instructor", "Academics User"} & set(frappe.get_roles(user)):
+        instructors = frappe.get_all(
+            "Instructor", filters={"employee": ["in", employees]}, pluck="name"
+        )
+    if not instructors and {"Instructor", "Academics User"} & set(
+        frappe.get_roles(user)
+    ):
         full_name = frappe.db.get_value("User", user, "full_name")
         if full_name:
-            instructors = frappe.get_all("Instructor", filters={"instructor_name": full_name}, pluck="name")
+            instructors = frappe.get_all(
+                "Instructor", filters={"instructor_name": full_name}, pluck="name"
+            )
     return instructors
 
 
@@ -91,7 +102,9 @@ def _get_viewable_students(student=None):
     if student:
         if student == own or is_guardian_of(student):
             return [student]
-        raise frappe.PermissionError(_("You are not authorized to access this student's records."))
+        raise frappe.PermissionError(
+            _("You are not authorized to access this student's records.")
+        )
     students = [own] if own else []
     for ward in _get_guardian_ward_ids():
         if ward not in students:
@@ -119,7 +132,9 @@ def _check_program_access(program):
     if _is_staff():
         return
     if program not in _get_student_programs(_get_viewable_students()):
-        raise frappe.PermissionError(_("You are not enrolled in program {0}.").format(program))
+        raise frappe.PermissionError(
+            _("You are not enrolled in program {0}.").format(program)
+        )
 
 
 def get_course(program):
@@ -130,6 +145,7 @@ def get_course(program):
     )
 
 
+# nosemgrep: guest-whitelisted-method -- public program catalogue for the admission form
 @frappe.whitelist(allow_guest=True)
 def get_all_programs():
     return frappe.get_all(
@@ -176,45 +192,55 @@ def get_program_curriculum_details(program_name: str = None, program: str = None
     program_doc = frappe.get_doc("Program", prog)
     courses_data = []
 
-    for prog_course in (program_doc.courses or []):
+    for prog_course in program_doc.courses or []:
         course_name = prog_course.course
         if not course_name or not frappe.db.exists("Course", course_name):
             continue
         course_doc = frappe.get_doc("Course", course_name)
         topics_data = []
-        for course_topic in (course_doc.topics or []):
+        for course_topic in course_doc.topics or []:
             topic_name = course_topic.topic or course_topic.topic_name
             if not topic_name or not frappe.db.exists("Topic", topic_name):
                 continue
             topic_doc = frappe.get_doc("Topic", topic_name)
             contents = []
-            for tc in (topic_doc.topic_content or []):
+            for tc in topic_doc.topic_content or []:
                 if not tc.content:
                     continue
                 content_type = tc.content_type or "Article"
-                label = frappe.db.get_value(content_type, tc.content, "title") if frappe.db.exists(content_type, tc.content) else None
-                contents.append({
-                    "title": tc.content,
-                    "label": label or tc.content,
-                    "type": content_type.lower(),
-                    "status": "Available",
-                })
-            topics_data.append({
-                "name": topic_name,
-                "title": topic_doc.topic_name or topic_name,
-                "description": topic_doc.description or "",
-                "contents": contents,
-            })
+                label = (
+                    frappe.db.get_value(content_type, tc.content, "title")
+                    if frappe.db.exists(content_type, tc.content)
+                    else None
+                )
+                contents.append(
+                    {
+                        "title": tc.content,
+                        "label": label or tc.content,
+                        "type": content_type.lower(),
+                        "status": "Available",
+                    }
+                )
+            topics_data.append(
+                {
+                    "name": topic_name,
+                    "title": topic_doc.topic_name or topic_name,
+                    "description": topic_doc.description or "",
+                    "contents": contents,
+                }
+            )
 
-        courses_data.append({
-            "name": course_name,
-            "courseName": course_doc.course_name or course_name,
-            "department": course_doc.department or "",
-            "description": course_doc.description or "",
-            "required": prog_course.required,
-            "topicsCount": len(topics_data),
-            "topics": topics_data,
-        })
+        courses_data.append(
+            {
+                "name": course_name,
+                "courseName": course_doc.course_name or course_name,
+                "department": course_doc.department or "",
+                "description": course_doc.description or "",
+                "required": prog_course.required,
+                "topicsCount": len(topics_data),
+                "topics": topics_data,
+            }
+        )
 
     return courses_data
 
@@ -254,41 +280,59 @@ def get_learning_content_details(content_type: str, content_name: str):
     }
 
     if content_type_cap == "Article":
-        data.update({
-            "author": getattr(doc, "author", "") or "",
-            "content": getattr(doc, "content", "") or "",
-            "publish_date": str(getattr(doc, "publish_date", "")) if getattr(doc, "publish_date", None) else "",
-        })
+        data.update(
+            {
+                "author": getattr(doc, "author", "") or "",
+                "content": getattr(doc, "content", "") or "",
+                "publish_date": (
+                    str(getattr(doc, "publish_date", ""))
+                    if getattr(doc, "publish_date", None)
+                    else ""
+                ),
+            }
+        )
     elif content_type_cap == "Video":
-        data.update({
-            "provider": getattr(doc, "provider", "YouTube"),
-            "url": getattr(doc, "url", ""),
-            "duration": getattr(doc, "duration", 0),
-            "description": getattr(doc, "description", "") or "",
-            "publish_date": str(getattr(doc, "publish_date", "")) if getattr(doc, "publish_date", None) else "",
-        })
+        data.update(
+            {
+                "provider": getattr(doc, "provider", "YouTube"),
+                "url": getattr(doc, "url", ""),
+                "duration": getattr(doc, "duration", 0),
+                "description": getattr(doc, "description", "") or "",
+                "publish_date": (
+                    str(getattr(doc, "publish_date", ""))
+                    if getattr(doc, "publish_date", None)
+                    else ""
+                ),
+            }
+        )
     elif content_type_cap == "Quiz":
         questions = []
-        for q_row in (doc.question or []):
+        for q_row in doc.question or []:
             q_text = q_row.question or ""
             q_options = []
             q_type = "Single Correct Answer"
-            if q_row.question_link and frappe.db.exists("Question", q_row.question_link):
+            if q_row.question_link and frappe.db.exists(
+                "Question", q_row.question_link
+            ):
                 q_doc = frappe.get_doc("Question", q_row.question_link)
                 q_text = q_doc.question or q_text
                 q_type = q_doc.question_type or "Single Correct Answer"
-                for opt in (q_doc.options or []):
-                    q_options.append({
-                        "option": opt.option,
-                        "is_correct": bool(opt.is_correct),
-                        "explanation": getattr(opt, "explanation", "") or "",
-                    })
-            questions.append({
-                "question": q_text,
-                "question_link": q_row.question_link,
-                "question_type": q_type,
-                "options": q_options,
-            })
+                for opt in q_doc.options or []:
+                    q_options.append(
+                        {
+                            "option": opt.option,
+                            "is_correct": bool(opt.is_correct),
+                            "explanation": getattr(opt, "explanation", "") or "",
+                        }
+                    )
+            questions.append(
+                {
+                    "question": q_text,
+                    "question_link": q_row.question_link,
+                    "question_type": q_type,
+                    "options": q_options,
+                }
+            )
         # Students / guardians must not receive the answer key with the questions; the
         # per-question review comes back from submit_quiz_assessment after an attempt.
         if not _is_quiz_staff():
@@ -296,13 +340,15 @@ def get_learning_content_details(content_type: str, content_name: str):
                 for opt in q["options"]:
                     opt.pop("is_correct", None)
                     opt.pop("explanation", None)
-        data.update({
-            "passing_score": getattr(doc, "passing_score", 60),
-            "max_attempts": getattr(doc, "max_attempts", 3),
-            "duration": getattr(doc, "duration", None),
-            "is_time_bound": bool(getattr(doc, "is_time_bound", 0)),
-            "questions": questions,
-        })
+        data.update(
+            {
+                "passing_score": getattr(doc, "passing_score", 60),
+                "max_attempts": getattr(doc, "max_attempts", 3),
+                "duration": getattr(doc, "duration", None),
+                "is_time_bound": bool(getattr(doc, "is_time_bound", 0)),
+                "questions": questions,
+            }
+        )
         try:
             data["quiz_status"] = get_quiz_status(content_name)
         except Exception:
@@ -312,7 +358,13 @@ def get_learning_content_details(content_type: str, content_name: str):
 
 
 @frappe.whitelist(methods=["POST"])
-def create_topic_learning_material(topic_name: str, content_type: str, title: str, details=None, course_name: str = None):
+def create_topic_learning_material(
+    topic_name: str,
+    content_type: str,
+    title: str,
+    details: dict | str | None = None,
+    course_name: str = None,
+):
     _require_staff(_("add learning material"))
     if isinstance(details, str):
         try:
@@ -333,7 +385,9 @@ def create_topic_learning_material(topic_name: str, content_type: str, title: st
     if not frappe.db.exists("Topic", topic_name):
         topic_doc = frappe.new_doc("Topic")
         topic_doc.topic_name = topic_name
-        topic_doc.description = f"Topic curriculum module for {course_name or 'the course'}"
+        topic_doc.description = (
+            f"Topic curriculum module for {course_name or 'the course'}"
+        )
         topic_doc.insert(ignore_permissions=True)
         if course_name and frappe.db.exists("Course", course_name):
             course_doc = frappe.get_doc("Course", course_name)
@@ -378,17 +432,22 @@ def create_topic_learning_material(topic_name: str, content_type: str, title: st
             question_doc.question = q_text
             question_doc.question_type = q_type
             for opt in q_options_input:
-                question_doc.append("options", {
-                    "option": opt.get("option") or "",
-                    "is_correct": 1 if opt.get("is_correct") else 0,
-                    "explanation": opt.get("explanation") or "",
-                })
+                question_doc.append(
+                    "options",
+                    {
+                        "option": opt.get("option") or "",
+                        "is_correct": 1 if opt.get("is_correct") else 0,
+                        "explanation": opt.get("explanation") or "",
+                    },
+                )
             question_doc.insert(ignore_permissions=True)
 
-            quiz_question_rows.append({
-                "question_link": question_doc.name,
-                "question": q_text,
-            })
+            quiz_question_rows.append(
+                {
+                    "question_link": question_doc.name,
+                    "question": q_text,
+                }
+            )
 
         quiz_doc = frappe.new_doc("Quiz")
         quiz_doc.title = title
@@ -402,12 +461,14 @@ def create_topic_learning_material(topic_name: str, content_type: str, title: st
         quiz_doc.insert(ignore_permissions=True)
         created_content_name = quiz_doc.name
 
-    topic_doc.append("topic_content", {
-        "content_type": content_type_cap,
-        "content": created_content_name,
-    })
+    topic_doc.append(
+        "topic_content",
+        {
+            "content_type": content_type_cap,
+            "content": created_content_name,
+        },
+    )
     topic_doc.save(ignore_permissions=True)
-    frappe.db.commit()
 
     return {
         "success": True,
@@ -425,10 +486,10 @@ def create_topic_learning_material(topic_name: str, content_type: str, title: st
 def create_course_topic(course_name: str, topic_title: str, description: str = ""):
     _require_staff(_("create topics"))
     if not course_name or not topic_title:
-        frappe.throw("Course name and Topic title are required.")
+        frappe.throw(_("Course name and Topic title are required."))
 
     if not frappe.db.exists("Course", course_name):
-        frappe.throw(f"Course {course_name} does not exist.")
+        frappe.throw(_("Course {0} does not exist.").format(course_name))
 
     topic_doc = frappe.new_doc("Topic")
     topic_doc.topic_name = topic_title
@@ -438,7 +499,6 @@ def create_course_topic(course_name: str, topic_title: str, description: str = "
     course_doc = frappe.get_doc("Course", course_name)
     course_doc.append("topics", {"topic": topic_doc.name})
     course_doc.save(ignore_permissions=True)
-    frappe.db.commit()
 
     return {
         "success": True,
@@ -447,7 +507,7 @@ def create_course_topic(course_name: str, topic_title: str, description: str = "
             "title": topic_doc.topic_name,
             "description": topic_doc.description,
             "contents": [],
-        }
+        },
     }
 
 
@@ -469,12 +529,18 @@ def create_program(
 
     doc = frappe.new_doc("Program")
     doc.program_name = program_name
-    doc.program_abbreviation = program_abbreviation or (program_name[:8].upper() if len(program_name) <= 8 else "".join([w[0] for w in program_name.split() if w]).upper())
+    doc.program_abbreviation = program_abbreviation or (
+        program_name[:8].upper()
+        if len(program_name) <= 8
+        else "".join([w[0] for w in program_name.split() if w]).upper()
+    )
     if department and frappe.db.exists("Department", department):
         doc.department = department
 
     # Attach courses if provided
-    parsed_courses = json.loads(courses) if isinstance(courses, str) else (courses or [])
+    parsed_courses = (
+        json.loads(courses) if isinstance(courses, str) else (courses or [])
+    )
     for c in parsed_courses:
         c_name = c if isinstance(c, str) else c.get("course")
         if c_name and frappe.db.exists("Course", c_name):
@@ -484,12 +550,17 @@ def create_program(
 
     # Automatically create default section (Student Group) if requested
     default_sg_name = f"{program_name} - Section A"
-    curr_year = (
-        frappe.db.get_value("Academic Year", {"year_start_date": ["<=", today()], "year_end_date": [">=", today()]}, "name")
-        or frappe.db.get_value("Academic Year", {}, "name", order_by="year_start_date desc")
+    curr_year = frappe.db.get_value(
+        "Academic Year",
+        {"year_start_date": ["<=", today()], "year_end_date": [">=", today()]},
+        "name",
+    ) or frappe.db.get_value(
+        "Academic Year", {}, "name", order_by="year_start_date desc"
     )
     create_default_section = bool(create_default_section) and bool(curr_year)
-    if create_default_section and not frappe.db.exists("Student Group", default_sg_name):
+    if create_default_section and not frappe.db.exists(
+        "Student Group", default_sg_name
+    ):
         sg = frappe.new_doc("Student Group")
         sg.student_group_name = default_sg_name
         sg.group_based_on = "Batch"
@@ -497,8 +568,6 @@ def create_program(
         sg.academic_year = curr_year
         sg.max_strength = 40
         sg.insert(ignore_permissions=True)
-
-    frappe.db.commit()
 
     return {
         "success": True,
@@ -529,8 +598,12 @@ def create_course(
         frappe.throw(frappe._("Course '{0}' already exists.").format(course_name))
 
     # Resolve default grading scale
-    if not default_grading_scale or not frappe.db.exists("Grading Scale", default_grading_scale):
-        default_grading_scale = frappe.db.get_value("Grading Scale", {"docstatus": ["<", 2]}, "name")
+    if not default_grading_scale or not frappe.db.exists(
+        "Grading Scale", default_grading_scale
+    ):
+        default_grading_scale = frappe.db.get_value(
+            "Grading Scale", {"docstatus": ["<", 2]}, "name"
+        )
 
     doc = frappe.new_doc("Course")
     doc.course_name = course_name
@@ -550,7 +623,11 @@ def create_course(
     if program:
         progs_to_link.add(program)
     if attach_to_programs:
-        parsed_progs = json.loads(attach_to_programs) if isinstance(attach_to_programs, str) else attach_to_programs
+        parsed_progs = (
+            json.loads(attach_to_programs)
+            if isinstance(attach_to_programs, str)
+            else attach_to_programs
+        )
         for p in parsed_progs:
             if p:
                 progs_to_link.add(p)
@@ -562,8 +639,6 @@ def create_course(
             if not already_has:
                 prog_doc.append("courses", {"course": doc.name, "required": 1})
                 prog_doc.save(ignore_permissions=True)
-
-    frappe.db.commit()
 
     return {
         "success": True,
@@ -590,7 +665,9 @@ def create_academic_year(
 
     academic_year_name = academic_year_name.strip()
     if frappe.db.exists("Academic Year", academic_year_name):
-        frappe.throw(frappe._("Academic Year '{0}' already exists.").format(academic_year_name))
+        frappe.throw(
+            frappe._("Academic Year '{0}' already exists.").format(academic_year_name)
+        )
 
     if not year_start_date or not year_end_date:
         frappe.throw(frappe._("Both Year Start Date and Year End Date are required."))
@@ -603,7 +680,6 @@ def create_academic_year(
     doc.year_start_date = year_start_date
     doc.year_end_date = year_end_date
     doc.insert(ignore_permissions=True)
-    frappe.db.commit()
 
     return {
         "success": True,
@@ -614,6 +690,7 @@ def create_academic_year(
     }
 
 
+# nosemgrep: guest-whitelisted-method -- public academic year list for the admission form
 @frappe.whitelist(allow_guest=True)
 def get_all_academic_years():
     """Returns all Academic Years ordered by year_start_date desc."""
@@ -638,7 +715,9 @@ def create_academic_term(
 
     academic_year = academic_year.strip()
     if not frappe.db.exists("Academic Year", academic_year):
-        frappe.throw(frappe._("Academic Year '{0}' does not exist.").format(academic_year))
+        frappe.throw(
+            frappe._("Academic Year '{0}' does not exist.").format(academic_year)
+        )
 
     if not term_name or not term_name.strip():
         frappe.throw(frappe._("Term Name is required (e.g. 'Term 1' or 'Semester 1')."))
@@ -647,8 +726,14 @@ def create_academic_term(
     if not term_start_date or not term_end_date:
         frappe.throw(frappe._("Both Term Start Date and Term End Date are required."))
 
-    if frappe.db.exists("Academic Term", {"academic_year": academic_year, "term_name": term_name}):
-        frappe.throw(frappe._("Academic Term '{0}' already exists for Academic Year '{1}'.").format(term_name, academic_year))
+    if frappe.db.exists(
+        "Academic Term", {"academic_year": academic_year, "term_name": term_name}
+    ):
+        frappe.throw(
+            frappe._(
+                "Academic Term '{0}' already exists for Academic Year '{1}'."
+            ).format(term_name, academic_year)
+        )
 
     doc = frappe.new_doc("Academic Term")
     doc.academic_year = academic_year
@@ -656,7 +741,6 @@ def create_academic_term(
     doc.term_start_date = term_start_date
     doc.term_end_date = term_end_date
     doc.insert(ignore_permissions=True)
-    frappe.db.commit()
 
     return {
         "success": True,
@@ -669,6 +753,7 @@ def create_academic_term(
     }
 
 
+# nosemgrep: guest-whitelisted-method -- public academic term list for the admission form
 @frappe.whitelist(allow_guest=True)
 def get_all_academic_terms(academic_year: str | None = None):
     """Returns Academic Terms ordered by term_start_date desc."""
@@ -679,7 +764,14 @@ def get_all_academic_terms(academic_year: str | None = None):
     return frappe.get_all(
         "Academic Term",
         filters=filters,
-        fields=["name", "title", "academic_year", "term_name", "term_start_date", "term_end_date"],
+        fields=[
+            "name",
+            "title",
+            "academic_year",
+            "term_name",
+            "term_start_date",
+            "term_end_date",
+        ],
         order_by="term_start_date desc",
     )
 
@@ -704,12 +796,13 @@ def get_program_courses(program_name: str):
 
     program = frappe.get_doc("Program", program_name)
     result = []
-    for pc in (program.courses or []):
+    for pc in program.courses or []:
         course_name = pc.course
         course_doc = frappe.db.get_value(
-            "Course", course_name,
+            "Course",
+            course_name,
             ["name", "course_name", "department", "description"],
-            as_dict=True
+            as_dict=True,
         ) or {"name": course_name, "course_name": pc.course_name or course_name}
         course_doc["required"] = pc.required
         result.append(course_doc)
@@ -735,7 +828,6 @@ def assign_course_to_program(program_name: str, course: str, required: int = 1):
 
     prog_doc.append("courses", {"course": course, "required": int(required)})
     prog_doc.save(ignore_permissions=True)
-    frappe.db.commit()
 
     return {"status": "success", "program": program_name, "course": course}
 
@@ -756,7 +848,6 @@ def remove_course_from_program(program_name: str, course: str):
         return {"status": "not_found", "program": program_name, "course": course}
 
     prog_doc.save(ignore_permissions=True)
-    frappe.db.commit()
 
     return {"status": "success", "program": program_name, "course": course}
 
@@ -770,23 +861,33 @@ def delete_course(course: str):
         frappe.throw(frappe._("Course '{0}' does not exist.").format(course))
 
     # Remove course from any programs linked to it
-    programs_with_course = frappe.get_all("Program Course", filters={"course": course}, fields=["parent"])
+    programs_with_course = frappe.get_all(
+        "Program Course", filters={"course": course}, fields=["parent"]
+    )
     for row in programs_with_course:
         try:
             p_doc = frappe.get_doc("Program", row.parent)
             p_doc.courses = [c for c in (p_doc.courses or []) if c.course != course]
             p_doc.save(ignore_permissions=True)
         except Exception as e:
-            frappe.log_error(f"Error unlinking course {course} from program {row.parent}: {str(e)}")
+            frappe.log_error(
+                f"Error unlinking course {course} from program {row.parent}: {str(e)}"
+            )
 
     frappe.delete_doc("Course", course, ignore_permissions=True)
-    frappe.db.commit()
 
     return {"status": "success", "course": course}
 
 
-
-
 def _is_quiz_staff():
     roles = set(frappe.get_roles())
-    return bool(roles & {"Instructor", "Academics User", "Education Manager", "System Manager", "Administrator"})
+    return bool(
+        roles
+        & {
+            "Instructor",
+            "Academics User",
+            "Education Manager",
+            "System Manager",
+            "Administrator",
+        }
+    )

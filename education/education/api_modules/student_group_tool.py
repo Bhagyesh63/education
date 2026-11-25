@@ -29,7 +29,9 @@ import frappe
 from frappe import _
 from frappe.utils import cint
 
-from education.education.doctype.student_group.student_group import get_program_enrollment
+from education.education.doctype.student_group.student_group import (
+    get_program_enrollment,
+)
 
 
 def _require_group_permission():
@@ -51,7 +53,15 @@ def _subject(course_name, program):
     return name.strip() or course_name
 
 
-def _group_name(style, program, academic_year, academic_term, batch=None, course=None, course_name=None):
+def _group_name(
+    style,
+    program,
+    academic_year,
+    academic_term,
+    batch=None,
+    course=None,
+    course_name=None,
+):
     period = academic_term or academic_year
     if style == "desk":
         if course:
@@ -66,7 +76,12 @@ def _group_name(style, program, academic_year, academic_term, batch=None, course
 
 
 def _enrolled_students(academic_year, academic_term, program, batch=None, course=None):
-    rows = get_program_enrollment(academic_year, academic_term, program, batch, None, course) or []
+    rows = (
+        get_program_enrollment(
+            academic_year, academic_term, program, batch, None, course
+        )
+        or []
+    )
     seen, students = set(), []
     for r in rows:
         if r.student in seen:
@@ -78,7 +93,9 @@ def _enrolled_students(academic_year, academic_term, program, batch=None, course
     return students
 
 
-def _matching_group(name, group_based_on, program, academic_year, academic_term, batch, course):
+def _matching_group(
+    name, group_based_on, program, academic_year, academic_term, batch, course
+):
     if frappe.db.exists("Student Group", name):
         return name
     filters = {
@@ -97,20 +114,39 @@ def _matching_group(name, group_based_on, program, academic_year, academic_term,
 def get_student_group_tool_metadata():
     _require_group_permission()
     return {
-        "programs": frappe.get_all("Program", fields=["name", "program_name"], order_by="name asc"),
+        "programs": frappe.get_all(
+            "Program", fields=["name", "program_name"], order_by="name asc"
+        ),
         "academic_years": frappe.get_all(
-            "Academic Year", fields=["name", "year_start_date"], order_by="year_start_date desc"
+            "Academic Year",
+            fields=["name", "year_start_date"],
+            order_by="year_start_date desc",
         ),
         "academic_terms": frappe.get_all(
-            "Academic Term", fields=["name", "academic_year", "term_start_date"], order_by="term_start_date desc"
+            "Academic Term",
+            fields=["name", "academic_year", "term_start_date"],
+            order_by="term_start_date desc",
         ),
-        "student_batches": frappe.get_all("Student Batch Name", pluck="name", order_by="name asc"),
+        "student_batches": frappe.get_all(
+            "Student Batch Name", pluck="name", order_by="name asc"
+        ),
         "instructors": frappe.get_all(
-            "Instructor", filters={"status": "Active"}, fields=["name", "instructor_name"], order_by="instructor_name asc"
+            "Instructor",
+            filters={"status": "Active"},
+            fields=["name", "instructor_name"],
+            order_by="instructor_name asc",
         ),
-        "rooms": frappe.get_all("Room", fields=["name", "room_name", "seating_capacity"], order_by="room_name asc"),
-        "current_academic_year": frappe.db.get_single_value("Education Settings", "current_academic_year"),
-        "current_academic_term": frappe.db.get_single_value("Education Settings", "current_academic_term"),
+        "rooms": frappe.get_all(
+            "Room",
+            fields=["name", "room_name", "seating_capacity"],
+            order_by="room_name asc",
+        ),
+        "current_academic_year": frappe.db.get_single_value(
+            "Education Settings", "current_academic_year"
+        ),
+        "current_academic_term": frappe.db.get_single_value(
+            "Education Settings", "current_academic_term"
+        ),
     }
 
 
@@ -126,8 +162,16 @@ def get_student_group_proposals(
     _require_group_permission()
     if not program or not academic_year:
         frappe.throw(_("Program and Academic Year are required."))
-    if academic_term and frappe.db.get_value("Academic Term", academic_term, "academic_year") != academic_year:
-        frappe.throw(_("Academic Term {0} does not belong to Academic Year {1}.").format(academic_term, academic_year))
+    if (
+        academic_term
+        and frappe.db.get_value("Academic Term", academic_term, "academic_year")
+        != academic_year
+    ):
+        frappe.throw(
+            _("Academic Term {0} does not belong to Academic Year {1}.").format(
+                academic_term, academic_year
+            )
+        )
     separate_groups = cint(separate_groups)
 
     batches = frappe.get_all("Student Batch Name", pluck="name", order_by="name asc")
@@ -141,15 +185,39 @@ def get_student_group_proposals(
     plan = [{"group_based_on": "Batch", "batch": b} for b in batches]
     for c in courses:
         if separate_groups:
-            plan += [{"group_based_on": "Course", "course": c.course, "course_name": c.course_name, "batch": b} for b in batches]
+            plan += [
+                {
+                    "group_based_on": "Course",
+                    "course": c.course,
+                    "course_name": c.course_name,
+                    "batch": b,
+                }
+                for b in batches
+            ]
         else:
-            plan.append({"group_based_on": "Course", "course": c.course, "course_name": c.course_name})
+            plan.append(
+                {
+                    "group_based_on": "Course",
+                    "course": c.course,
+                    "course_name": c.course_name,
+                }
+            )
 
     proposals = []
     for p in plan:
         batch, course = p.get("batch"), p.get("course")
-        name = _group_name(name_style, program, academic_year, academic_term, batch, course, p.get("course_name"))
-        students = _enrolled_students(academic_year, academic_term, program, batch, course)
+        name = _group_name(
+            name_style,
+            program,
+            academic_year,
+            academic_term,
+            batch,
+            course,
+            p.get("course_name"),
+        )
+        students = _enrolled_students(
+            academic_year, academic_term, program, batch, course
+        )
         instructor = None
         if course:
             instructor = frappe.db.get_value(
@@ -167,7 +235,13 @@ def get_student_group_proposals(
                 "student_group_name": name,
                 "student_count": len(students),
                 "existing_group": _matching_group(
-                    name, p["group_based_on"], program, academic_year, academic_term, batch, course
+                    name,
+                    p["group_based_on"],
+                    program,
+                    academic_year,
+                    academic_term,
+                    batch,
+                    course,
                 ),
                 "suggested_instructor": instructor,
             }
@@ -194,8 +268,16 @@ def create_student_groups_via_tool(
         frappe.throw(_("Program {0} does not exist.").format(program))
     if not frappe.db.exists("Academic Year", academic_year):
         frappe.throw(_("Academic Year {0} does not exist.").format(academic_year))
-    if academic_term and frappe.db.get_value("Academic Term", academic_term, "academic_year") != academic_year:
-        frappe.throw(_("Academic Term {0} does not belong to Academic Year {1}.").format(academic_term, academic_year))
+    if (
+        academic_term
+        and frappe.db.get_value("Academic Term", academic_term, "academic_year")
+        != academic_year
+    ):
+        frappe.throw(
+            _("Academic Term {0} does not belong to Academic Year {1}.").format(
+                academic_term, academic_year
+            )
+        )
 
     created, skipped, errors = [], [], []
     seen_names = set()
@@ -208,34 +290,60 @@ def create_student_groups_via_tool(
             if not name:
                 raise frappe.ValidationError(_("Student Group Name is required."))
             if name in seen_names:
-                raise frappe.ValidationError(_("The name {0} is used twice in this run.").format(name))
+                raise frappe.ValidationError(
+                    _("The name {0} is used twice in this run.").format(name)
+                )
             seen_names.add(name)
             if g.group_based_on not in ("Batch", "Course"):
-                raise frappe.ValidationError(_("Group Based On must be Batch or Course."))
+                raise frappe.ValidationError(
+                    _("Group Based On must be Batch or Course.")
+                )
             if g.group_based_on == "Batch" and not g.batch:
-                raise frappe.ValidationError(_("Batch is required for a batch-based group."))
+                raise frappe.ValidationError(
+                    _("Batch is required for a batch-based group.")
+                )
             if g.group_based_on == "Course" and not g.course:
-                raise frappe.ValidationError(_("Course is required for a course-based group."))
+                raise frappe.ValidationError(
+                    _("Course is required for a course-based group.")
+                )
             if g.course and not frappe.db.exists(
-                "Program Course", {"parent": program, "parenttype": "Program", "course": g.course}
+                "Program Course",
+                {"parent": program, "parenttype": "Program", "course": g.course},
             ):
-                raise frappe.ValidationError(_("Course {0} is not part of {1}.").format(g.course, program))
+                raise frappe.ValidationError(
+                    _("Course {0} is not part of {1}.").format(g.course, program)
+                )
 
             existing = _matching_group(
-                name, g.group_based_on, program, academic_year, academic_term, g.batch, g.course
+                name,
+                g.group_based_on,
+                program,
+                academic_year,
+                academic_term,
+                g.batch,
+                g.course,
             )
             if existing:
-                skipped.append({"student_group_name": name, "reason": _("Already exists ({0})").format(existing)})
+                skipped.append(
+                    {
+                        "student_group_name": name,
+                        "reason": _("Already exists ({0})").format(existing),
+                    }
+                )
                 frappe.db.rollback(save_point=sp)
                 continue
 
-            students = _enrolled_students(academic_year, academic_term, program, g.batch, g.course)
+            students = _enrolled_students(
+                academic_year, academic_term, program, g.batch, g.course
+            )
             max_strength = cint(g.max_strength)
             if max_strength < 0:
                 raise frappe.ValidationError(_("Max strength cannot be negative."))
             if max_strength and len(students) > max_strength:
                 raise frappe.ValidationError(
-                    _("{0} students are enrolled but max strength is {1}.").format(len(students), max_strength)
+                    _("{0} students are enrolled but max strength is {1}.").format(
+                        len(students), max_strength
+                    )
                 )
 
             doc = frappe.new_doc("Student Group")
@@ -249,13 +357,25 @@ def create_student_groups_via_tool(
             doc.max_strength = max_strength or None
             if g.default_room:
                 if not frappe.db.exists("Room", g.default_room):
-                    raise frappe.ValidationError(_("Room {0} does not exist.").format(g.default_room))
+                    raise frappe.ValidationError(
+                        _("Room {0} does not exist.").format(g.default_room)
+                    )
                 doc.default_room = g.default_room
             for i, s in enumerate(students, 1):
-                doc.append("students", {"student": s.student, "student_name": s.student_name, "group_roll_number": i, "active": 1})
+                doc.append(
+                    "students",
+                    {
+                        "student": s.student,
+                        "student_name": s.student_name,
+                        "group_roll_number": i,
+                        "active": 1,
+                    },
+                )
             if g.instructor:
                 if not frappe.db.exists("Instructor", g.instructor):
-                    raise frappe.ValidationError(_("Instructor {0} does not exist.").format(g.instructor))
+                    raise frappe.ValidationError(
+                        _("Instructor {0} does not exist.").format(g.instructor)
+                    )
                 doc.append("instructors", {"instructor": g.instructor})
             doc.insert()
             created.append(
@@ -269,7 +389,12 @@ def create_student_groups_via_tool(
         except Exception as e:
             frappe.db.rollback(save_point=sp)
             frappe.clear_last_message()
-            errors.append({"student_group_name": name, "error": frappe.utils.strip_html_tags(str(e)) or type(e).__name__})
+            errors.append(
+                {
+                    "student_group_name": name,
+                    "error": frappe.utils.strip_html_tags(str(e)) or type(e).__name__,
+                }
+            )
         finally:
             frappe.local.message_log = []
 

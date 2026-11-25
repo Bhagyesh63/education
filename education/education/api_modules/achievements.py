@@ -11,7 +11,6 @@ from education.education.api_modules.students import (
     get_accessible_student_ids,
 )
 
-
 LOG_FIELDS = [
     "name",
     "student",
@@ -86,26 +85,26 @@ def _fetch_logs(filters, limit=100):
 
 
 @frappe.whitelist()
-def get_student_logs(student=None, log_type=None):
+def get_student_logs(student: str | None = None, log_type: str | None = None):
     """Student Log records (achievements, academic, general, medical), role-scoped."""
     return _fetch_logs(_scoped_log_filters(student, log_type))
 
 
 @frappe.whitelist()
-def get_student_achievements(student=None):
+def get_student_achievements(student: str | None = None):
     """Achievement-type Student Logs, role-scoped (student: self, guardian: wards, staff: any)."""
     return _fetch_logs(_scoped_log_filters(student, "Achievement"))
 
 
 @frappe.whitelist(methods=["POST"])
 def create_student_log(
-    student,
-    log_type="Achievement",
-    log="",
-    program=None,
-    academic_year=None,
-    academic_term=None,
-    date=None,
+    student: str | None,
+    log_type: str = "Achievement",
+    log: str | None = "",
+    program: str | None = None,
+    academic_year: str | None = None,
+    academic_term: str | None = None,
+    date: str | None = None,
 ):
     """Creates a Student Log record (Achievement, Academic, etc.) with permission verification."""
     _require_staff(_("Not permitted to create Student Log"))
@@ -129,7 +128,6 @@ def create_student_log(
     if academic_term:
         doc.academic_term = academic_term
     doc.insert(ignore_permissions=True)
-    frappe.db.commit()
     return doc.as_dict()
 
 
@@ -149,12 +147,11 @@ def get_notification_logs():
 
 
 @frappe.whitelist(methods=["POST"])
-def delete_student_log(log_name):
+def delete_student_log(log_name: str):
     _require_staff(_("Not permitted to delete Student Log"))
 
     if not frappe.db.exists("Student Log", log_name):
         frappe.throw(_("Student Log {0} not found").format(log_name))
 
     frappe.delete_doc("Student Log", log_name, ignore_permissions=True)
-    frappe.db.commit()
     return {"status": "success", "deleted": log_name}

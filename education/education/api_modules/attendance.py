@@ -8,7 +8,6 @@ from frappe.utils import getdate, today
 from education.education.api_modules.common import get_guardians_for_user
 from education.education.api_modules.students import get_student_groups
 
-
 # ==============================================================================
 # Access helpers (shared by attendance, assessment and fees modules)
 # ==============================================================================
@@ -61,7 +60,9 @@ def require_roles(roles, message=None):
 
 
 def require_staff(message=None):
-    require_roles(STAFF_ROLES, message or _("Only school staff can perform this action."))
+    require_roles(
+        STAFF_ROLES, message or _("Only school staff can perform this action.")
+    )
 
 
 def get_portal_student_ids(user=None, staff_roles=STAFF_ROLES):
@@ -122,6 +123,7 @@ def assert_student_access(student, staff_roles=STAFF_ROLES):
 # Attendance
 # ==============================================================================
 
+
 @frappe.whitelist()
 def check_attendance_records_exist(
     course_schedule: str | None = None,
@@ -131,7 +133,8 @@ def check_attendance_records_exist(
     require_staff()
     if course_schedule:
         return frappe.get_all(
-            "Student Attendance", filters={"course_schedule": course_schedule, "docstatus": 1}
+            "Student Attendance",
+            filters={"course_schedule": course_schedule, "docstatus": 1},
         )
     return frappe.get_all(
         "Student Attendance",
@@ -198,16 +201,18 @@ def get_attendance_roster(
         rec = attendance_map.get(s.student)
         current_status = rec.status if rec else None
         leave_info = leave_map.get(s.student)
-        result.append({
-            "student": s.student,
-            "student_name": s.student_name,
-            "group_roll_number": s.group_roll_number,
-            "status": current_status,
-            "attendance_id": rec.name if rec else None,
-            "on_leave": bool(leave_info or current_status == "Leave"),
-            "leave_reason": leave_info.reason if leave_info else None,
-            "leave_id": leave_info.name if leave_info else None,
-        })
+        result.append(
+            {
+                "student": s.student,
+                "student_name": s.student_name,
+                "group_roll_number": s.group_roll_number,
+                "status": current_status,
+                "attendance_id": rec.name if rec else None,
+                "on_leave": bool(leave_info or current_status == "Leave"),
+                "leave_reason": leave_info.reason if leave_info else None,
+                "leave_id": leave_info.name if leave_info else None,
+            }
+        )
 
     return result
 
@@ -222,11 +227,16 @@ def mark_attendance(
 ):
     require_staff(_("Only instructors and academic staff can mark attendance."))
     if not (student_group or course_schedule):
-        frappe.throw(_("Student Group or Course Schedule is required to mark attendance."))
+        frappe.throw(
+            _("Student Group or Course Schedule is required to mark attendance.")
+        )
     if course_schedule:
         # Attendance of a lecture always belongs to the lecture's group and date
         cs = frappe.db.get_value(
-            "Course Schedule", course_schedule, ["student_group", "schedule_date"], as_dict=True
+            "Course Schedule",
+            course_schedule,
+            ["student_group", "schedule_date"],
+            as_dict=True,
         )
         if not cs:
             frappe.throw(_("Course Schedule {0} not found.").format(course_schedule))
@@ -238,7 +248,9 @@ def mark_attendance(
         frappe.throw(_("Attendance cannot be marked for future dates."))
 
     if student_group:
-        academic_year = frappe.db.get_value("Student Group", student_group, "academic_year")
+        academic_year = frappe.db.get_value(
+            "Student Group", student_group, "academic_year"
+        )
         if academic_year:
             year_dates = frappe.db.get_value(
                 "Academic Year",
@@ -247,26 +259,32 @@ def mark_attendance(
                 as_dict=True,
             )
             if year_dates and year_dates.year_start_date and year_dates.year_end_date:
-                if getdate(date) < getdate(year_dates.year_start_date) or getdate(date) > getdate(
-                    year_dates.year_end_date
-                ):
+                if getdate(date) < getdate(year_dates.year_start_date) or getdate(
+                    date
+                ) > getdate(year_dates.year_end_date):
                     frappe.throw(
-                        _("Attendance cannot be marked outside of Academic Year {0}").format(
-                            academic_year
-                        )
+                        _(
+                            "Attendance cannot be marked outside of Academic Year {0}"
+                        ).format(academic_year)
                     )
 
-    present = json.loads(students_present) if isinstance(students_present, str) and students_present else (
-        students_present if isinstance(students_present, list) else []
+    present = (
+        json.loads(students_present)
+        if isinstance(students_present, str) and students_present
+        else (students_present if isinstance(students_present, list) else [])
     )
-    absent = json.loads(students_absent) if isinstance(students_absent, str) and students_absent else (
-        students_absent if isinstance(students_absent, list) else []
+    absent = (
+        json.loads(students_absent)
+        if isinstance(students_absent, str) and students_absent
+        else (students_absent if isinstance(students_absent, list) else [])
     )
 
     if not course_schedule:
         # The Student Attendance doctype allows only one record per student, group and date,
         # so group attendance cannot be added on top of per-lecture attendance.
-        student_ids = [d.get("student") if isinstance(d, dict) else d for d in present + absent]
+        student_ids = [
+            d.get("student") if isinstance(d, dict) else d for d in present + absent
+        ]
         per_lecture = frappe.get_all(
             "Student Attendance",
             filters={
@@ -320,7 +338,11 @@ def make_attendance_records(
     if course_schedule:
         existing_name = frappe.db.get_value(
             "Student Attendance",
-            {"student": student, "course_schedule": course_schedule, "docstatus": ("!=", 2)},
+            {
+                "student": student,
+                "course_schedule": course_schedule,
+                "docstatus": ("!=", 2),
+            },
             "name",
         )
     else:
@@ -350,7 +372,9 @@ def make_attendance_records(
 
     att_doc = frappe.new_doc("Student Attendance")
     att_doc.student = student
-    att_doc.student_name = student_name or frappe.db.get_value("Student", student, "student_name")
+    att_doc.student_name = student_name or frappe.db.get_value(
+        "Student", student, "student_name"
+    )
     att_doc.course_schedule = course_schedule
     att_doc.student_group = student_group
     att_doc.date = date
@@ -417,9 +441,9 @@ def _resolve_holiday_list(holiday_list=None):
         return holiday_list
 
     current = today()
-    company = frappe.defaults.get_user_default("Company") or frappe.defaults.get_global_default(
-        "company"
-    )
+    company = frappe.defaults.get_user_default(
+        "Company"
+    ) or frappe.defaults.get_global_default("company")
     if company:
         default_list = frappe.db.get_value("Company", company, "default_holiday_list")
         if default_list:
@@ -435,7 +459,9 @@ def _resolve_holiday_list(holiday_list=None):
     if covering:
         return covering[0]
 
-    latest = frappe.get_all("Holiday List", pluck="name", order_by="to_date desc", limit=1)
+    latest = frappe.get_all(
+        "Holiday List", pluck="name", order_by="to_date desc", limit=1
+    )
     return latest[0] if latest else None
 
 
@@ -446,9 +472,12 @@ def get_school_holidays(holiday_list: str | None = None, include_weekly_off: int
     if not holiday_list:
         return []
 
-    list_meta = frappe.db.get_value(
-        "Holiday List", holiday_list, ["from_date", "to_date"], as_dict=True
-    ) or {}
+    list_meta = (
+        frappe.db.get_value(
+            "Holiday List", holiday_list, ["from_date", "to_date"], as_dict=True
+        )
+        or {}
+    )
 
     filters = {"parent": holiday_list, "parenttype": "Holiday List"}
     if not int(include_weekly_off or 0):
@@ -500,7 +529,9 @@ def get_student_leaves(student: str | None = None):
 
 @frappe.whitelist(methods=["POST"])
 def approve_student_leave(leave_id: str):
-    require_staff(_("Only instructors and academic staff can approve leave applications."))
+    require_staff(
+        _("Only instructors and academic staff can approve leave applications.")
+    )
     doc = frappe.get_doc("Student Leave Application", leave_id)
     if doc.docstatus == 0:
         doc.flags.ignore_permissions = True
@@ -540,16 +571,23 @@ def apply_leave(leave_data: dict | str, program_name: str | None = None):
         "Education Settings", "attendance_based_on_course_schedule"
     )
     if attendance_based_on_course_schedule:
-        doc = create_student_leave_application_based_on_course_schedule(leave_data, program_name)
+        doc = create_student_leave_application_based_on_course_schedule(
+            leave_data, program_name
+        )
     else:
-        doc = create_student_leave_application_based_on_student_group(leave_data, program_name)
+        doc = create_student_leave_application_based_on_student_group(
+            leave_data, program_name
+        )
 
     return {"name": doc.name, "docstatus": doc.docstatus}
 
 
 def create_student_leave_application_based_on_course_schedule(leave_data, program_name):
     filters = {
-        "schedule_date": ["between", [leave_data.get("from_date"), leave_data.get("to_date")]],
+        "schedule_date": [
+            "between",
+            [leave_data.get("from_date"), leave_data.get("to_date")],
+        ],
     }
     if program_name:
         filters["program"] = program_name
@@ -589,9 +627,9 @@ def create_student_leave_application_based_on_student_group(leave_data, program_
         ]
     if not groups:
         frappe.throw(
-            _("No active student group found for {0}. Please contact the school office.").format(
-                leave_data.get("student_name") or student
-            )
+            _(
+                "No active student group found for {0}. Please contact the school office."
+            ).format(leave_data.get("student_name") or student)
         )
 
     doc = frappe.new_doc("Student Leave Application")

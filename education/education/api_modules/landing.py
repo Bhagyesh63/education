@@ -14,6 +14,7 @@ from frappe.utils import getdate, now_datetime, nowdate
 from education.education.api_modules.common import _clean_text
 
 
+# nosemgrep: guest-whitelisted-method -- public landing page data (school, contact, programs, open drives, public notices)
 @frappe.whitelist(allow_guest=True, methods=["GET"])
 def get_landing_context():
     return {
@@ -42,21 +43,35 @@ def _get_contact():
     company = frappe.defaults.get_global_default("company")
     if not company:
         return {}
-    contact = frappe.db.get_value(
-        "Company", company, ["phone_no", "email", "website"], as_dict=True
-    ) or {}
+    contact = (
+        frappe.db.get_value(
+            "Company", company, ["phone_no", "email", "website"], as_dict=True
+        )
+        or {}
+    )
 
     address = None
     address_names = frappe.get_all(
         "Dynamic Link",
-        filters={"link_doctype": "Company", "link_name": company, "parenttype": "Address"},
+        filters={
+            "link_doctype": "Company",
+            "link_name": company,
+            "parenttype": "Address",
+        },
         pluck="parent",
     )
     if address_names:
         address = frappe.get_all(
             "Address",
             filters={"name": ["in", address_names], "disabled": 0},
-            fields=["address_line1", "address_line2", "city", "state", "pincode", "country"],
+            fields=[
+                "address_line1",
+                "address_line2",
+                "city",
+                "state",
+                "pincode",
+                "country",
+            ],
             order_by="is_primary_address desc, modified desc",
             limit=1,
         )

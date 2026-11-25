@@ -7,7 +7,11 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import getdate, nowdate, cint
 from education.education.api_modules.common import get_guardians_for_user
-from education.education.api_modules.students import _is_staff, _require_login, _require_staff
+from education.education.api_modules.students import (
+    _is_staff,
+    _require_login,
+    _require_staff,
+)
 
 APPLICANT_LIST_FIELDS = [
     "name",
@@ -42,14 +46,23 @@ def _own_applicant_names(user=None):
         return []
     names = set()
     email = frappe.db.get_value("User", user, "email") or user
-    names.update(frappe.get_all("Student Applicant", filters={"student_email_id": email}, pluck="name"))
+    names.update(
+        frappe.get_all(
+            "Student Applicant", filters={"student_email_id": email}, pluck="name"
+        )
+    )
     guardians = get_guardians_for_user(user)
     if guardians:
-        names.update(frappe.get_all(
-            "Student Guardian",
-            filters={"parenttype": "Student Applicant", "guardian": ["in", guardians]},
-            pluck="parent",
-        ))
+        names.update(
+            frappe.get_all(
+                "Student Guardian",
+                filters={
+                    "parenttype": "Student Applicant",
+                    "guardian": ["in", guardians],
+                },
+                pluck="parent",
+            )
+        )
     own_applicant = frappe.db.get_value("Student", {"user": user}, "student_applicant")
     if own_applicant:
         names.add(own_applicant)
@@ -61,9 +74,13 @@ def _assert_can_view_applicant(applicant_name):
     if _is_staff():
         return
     if applicant_name not in _own_applicant_names():
-        frappe.throw(_("You are not authorized to view this application."), frappe.PermissionError)
+        frappe.throw(
+            _("You are not authorized to view this application."),
+            frappe.PermissionError,
+        )
 
 
+# nosemgrep: guest-whitelisted-method -- guests only see published drives, no applicant counts
 @frappe.whitelist(allow_guest=True)
 def get_admissions_list():
     """Returns Student Admission drives. Staff see every drive with applicant counts;
@@ -180,7 +197,8 @@ def get_student_applicants(
     if search:
         s = search.lower().strip()
         applicants = [
-            a for a in applicants
+            a
+            for a in applicants
             if s in (a.get("title") or "").lower()
             or s in (a.get("name") or "").lower()
             or s in (a.get("student_email_id") or "").lower()
@@ -195,20 +213,27 @@ def get_applicant_details(applicant_name: str):
     """Returns full details of a Student Applicant including guardians."""
     _assert_can_view_applicant(applicant_name)
     if not frappe.db.exists("Student Applicant", applicant_name):
-        frappe.throw(_("Applicant {0} not found").format(applicant_name), frappe.DoesNotExistError)
+        frappe.throw(
+            _("Applicant {0} not found").format(applicant_name),
+            frappe.DoesNotExistError,
+        )
 
     doc = frappe.get_doc("Student Applicant", applicant_name)
     data = doc.as_dict()
 
     # Check if student was already created from this applicant
     enrolled_student = frappe.db.get_value(
-        "Student", {"student_applicant": applicant_name}, ["name", "student_name"], as_dict=True
+        "Student",
+        {"student_applicant": applicant_name},
+        ["name", "student_name"],
+        as_dict=True,
     )
     data["enrolled_student"] = enrolled_student
 
     return data
 
 
+# nosemgrep: guest-whitelisted-method -- public admission form; guests restricted to open drives and rate limited
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def create_student_applicant(
     first_name: str,
@@ -243,7 +268,11 @@ def create_student_applicant(
         _guest_application_rate_limit()
         _validate_guest_application(program, academic_year, student_admission)
         if not (student_email_id or student_mobile_number):
-            frappe.throw(_("Please provide an email address or mobile number so the school can contact you."))
+            frappe.throw(
+                _(
+                    "Please provide an email address or mobile number so the school can contact you."
+                )
+            )
         guardians = None
 
     doc = frappe.new_doc("Student Applicant")
@@ -278,19 +307,26 @@ def create_student_applicant(
     if not guardians and frappe.session.user != "Guest" and not _is_staff():
         own_guardian = (get_guardians_for_user() or [None])[0]
         if own_guardian:
-            guardians = [{
-                "guardian": own_guardian,
-                "guardian_name": frappe.db.get_value("Guardian", own_guardian, "guardian_name"),
-            }]
+            guardians = [
+                {
+                    "guardian": own_guardian,
+                    "guardian_name": frappe.db.get_value(
+                        "Guardian", own_guardian, "guardian_name"
+                    ),
+                }
+            ]
 
     if guardians and isinstance(guardians, list):
         for g in guardians:
             if isinstance(g, dict) and g.get("guardian"):
-                doc.append("guardians", {
-                    "guardian": g.get("guardian"),
-                    "guardian_name": g.get("guardian_name"),
-                    "relation": g.get("relation"),
-                })
+                doc.append(
+                    "guardians",
+                    {
+                        "guardian": g.get("guardian"),
+                        "guardian_name": g.get("guardian_name"),
+                        "relation": g.get("relation"),
+                    },
+                )
 
     doc.insert(ignore_permissions=True)
     if is_guest:
@@ -308,9 +344,15 @@ def _validate_guest_application(program, academic_year, student_admission):
 
     if not student_admission:
         frappe.throw(_("Please choose an open admission drive."))
-    drive = next((d for d in get_open_admissions() if d.name == student_admission), None)
+    drive = next(
+        (d for d in get_open_admissions() if d.name == student_admission), None
+    )
     if not drive or not drive.enable_admission_application:
-        frappe.throw(_("Admissions for {0} are not open for online applications.").format(student_admission))
+        frappe.throw(
+            _("Admissions for {0} are not open for online applications.").format(
+                student_admission
+            )
+        )
     if drive.academic_year and drive.academic_year != academic_year:
         frappe.throw(_("Academic Year does not match the admission drive."))
     if program not in [p.program for p in drive.programs]:
@@ -337,17 +379,24 @@ def admit_and_enroll_applicant(applicant_name: str):
     from education.education.api_modules.students import enroll_student
 
     if not frappe.db.exists("Student Applicant", applicant_name):
-        frappe.throw(_("Applicant {0} not found").format(applicant_name), frappe.DoesNotExistError)
+        frappe.throw(
+            _("Applicant {0} not found").format(applicant_name),
+            frappe.DoesNotExistError,
+        )
 
     applicant = frappe.get_doc("Student Applicant", applicant_name)
 
     # Check if student already enrolled
-    existing_student = frappe.db.get_value("Student", {"student_applicant": applicant_name}, "name")
+    existing_student = frappe.db.get_value(
+        "Student", {"student_applicant": applicant_name}, "name"
+    )
     if existing_student:
         return {
             "status": "already_enrolled",
             "student": existing_student,
-            "message": _("Student {0} has already been enrolled from this application.").format(existing_student)
+            "message": _(
+                "Student {0} has already been enrolled from this application."
+            ).format(existing_student),
         }
 
     # Ensure status is approved before enrolling
@@ -364,7 +413,6 @@ def admit_and_enroll_applicant(applicant_name: str):
     applicant.reload()
     applicant.application_status = "Admitted"
     applicant.save()
-    frappe.db.commit()
 
     return {
         "status": "success",

@@ -178,7 +178,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-02-04 12:15:05.069346",
+ "modified": "2026-11-25 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Education",
  "name": "Education Settings",
@@ -206,7 +206,7 @@
   },
   {
    "read": 1,
-   "role": "All"
+   "role": "Desk User"
   }
  ],
  "quick_entry": 1,
