@@ -1,12 +1,10 @@
 name: Build Container Image
 on:
+  # Images are built on demand or for release tags (e.g. v16.0.2), against Frappe/ERPNext v16.
   workflow_dispatch:
   push:
-    branches:
-      - version-15
-      - develop
     tags:
-      - "*"
+      - "v*"
 
 jobs:
   build:
@@ -39,14 +37,14 @@ jobs:
 
       - name: Set Branch
         run: |
-          export APPS_JSON='[{"url": "https://github.com/frappe/erpnext","branch": "${{ github.ref_name }}"},{"url": "https://github.com/${{ github.repository }}","branch": "${{ github.ref_name }}"}]'
+          export APPS_JSON='[{"url": "https://github.com/frappe/erpnext","branch": "version-16"},{"url": "https://github.com/${{ github.repository }}","branch": "${{ github.ref_name }}"}]'
           echo "APPS_JSON_BASE64=$(echo $APPS_JSON | base64 -w 0)" >> $GITHUB_ENV
-          echo "FRAPPE_BRANCH=${{ github.ref_type == 'tag' || github.ref_name == 'version-15' && 'version-15' || 'develop' }}" >> $GITHUB_ENV
+          echo "FRAPPE_BRANCH=version-16" >> $GITHUB_ENV
 
       - name: Set Image Tag
         run: |
-          echo "IMAGE_TAG=${{ github.ref_name == 'develop' && 'latest' || 'v15' }}" >> $GITHUB_ENV
-          echo "STABLE_TAG=${{ github.ref_name == 'develop' && 'nightly' || 'stable' }}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=v16" >> $GITHUB_ENV
+          echo "STABLE_TAG=${{ github.ref_type == 'tag' && 'stable' || 'edge' }}" >> $GITHUB_ENV
 
       - uses: actions/checkout@v4
         with:

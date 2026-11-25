@@ -1,0 +1,7 @@
+# Frappe semgrep rules target the Python backend and desk JavaScript.
+# The SPA frontends are linted by their own toolchains (oxlint in frontend.yml);
+# semgrep's JS parser also cannot parse JSX text such as "Curriculum & Courses".
+frontend-react/
+frontend/
+node_modules/
+education/public/frontend/
